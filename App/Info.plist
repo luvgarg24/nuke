@@ -14,5 +14,8 @@
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSDownloadsFolderUsageDescription</key><string>NUKE scans Downloads for large files so you can review what is using storage.</string>
+    <key>NSDocumentsFolderUsageDescription</key><string>NUKE scans Documents for large files so you can review what is using storage.</string>
+    <key>NSDesktopFolderUsageDescription</key><string>NUKE scans Desktop for large files so you can review what is using storage.</string>
 </dict>
 </plist>

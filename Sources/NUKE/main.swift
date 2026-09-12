@@ -3,476 +3,110 @@ import AppKit
 
 @main
 struct NukeApp: App {
-    var body: some Scene {
-        WindowGroup { ContentView() }
-            .defaultSize(width: 1040, height: 700)
-    }
+    var body: some Scene { WindowGroup { ContentView() }.defaultSize(width: 1080, height: 720) }
 }
 
 enum FindingKind: String, Sendable { case nuke, review }
-
 enum Page: String, CaseIterable, Identifiable {
-    case nuking = "Nuking"
-    case review = "Review"
-    case ignored = "Ignored"
+    case nuking = "Nuking", review = "Review", ignored = "Ignored"
     var id: String { rawValue }
-    var icon: String {
-        switch self {
-        case .nuking: return "trash"
-        case .review: return "eye"
-        case .ignored: return "folder"
-        }
-    }
+    var icon: String { switch self { case .nuking: return "trash"; case .review: return "eye"; case .ignored: return "folder" } }
 }
+struct Finding: Identifiable, Hashable, Sendable { let id, name, what, consequence, path: String; let bytes: Int64; let kind: FindingKind }
+struct StorageArea: Identifiable, Hashable, Sendable { let id, name, path: String; let bytes: Int64; let icon: String }
 
-struct Finding: Identifiable, Hashable, Sendable {
-    let id: String
-    let name: String
-    let what: String
-    let consequence: String
-    let path: String
-    let bytes: Int64
-    let kind: FindingKind
-}
-
-nonisolated func folderSize(_ path: String) -> Int64 {
-    let fm = FileManager.default
-    var isDirectory: ObjCBool = false
-    guard fm.fileExists(atPath: path, isDirectory: &isDirectory) else { return 0 }
-    if !isDirectory.boolValue {
-        return (try? fm.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0
-    }
-    guard let enumerator = fm.enumerator(
-        at: URL(fileURLWithPath: path),
-        includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
-        options: [.skipsHiddenFiles]
-    ) else { return 0 }
+nonisolated func itemSize(_ path: String) -> Int64 {
+    let fm = FileManager.default; var isDir: ObjCBool = false
+    guard fm.fileExists(atPath: path, isDirectory: &isDir) else { return 0 }
+    if !isDir.boolValue { return (try? fm.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0 }
+    guard let e = fm.enumerator(at: URL(fileURLWithPath: path), includingPropertiesForKeys: [.fileSizeKey,.isRegularFileKey], options: [.skipsPackageDescendants]) else { return 0 }
     var total: Int64 = 0
-    for case let url as URL in enumerator {
-        if let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]), values.isRegularFile == true {
-            total += Int64(values.fileSize ?? 0)
-        }
-    }
+    for case let u as URL in e { if let v = try? u.resourceValues(forKeys: [.fileSizeKey,.isRegularFileKey]), v.isRegularFile == true { total += Int64(v.fileSize ?? 0) } }
     return total
 }
-
 nonisolated func isProtectedAppleCache(_ name: String) -> Bool {
-    let value = name.lowercased()
-    return value == "apple" ||
-        value.hasPrefix("com.apple") ||
-        value.hasPrefix("apple.") ||
-        value.contains("music") ||
-        value.contains("media") ||
-        value.contains("photo") ||
-        value.contains("itunes")
+    let v=name.lowercased(); return v=="apple" || v.hasPrefix("com.apple") || v.hasPrefix("apple.") || v.contains("music") || v.contains("media") || v.contains("photo") || v.contains("itunes")
 }
-
 nonisolated func friendlyCacheName(_ raw: String) -> String {
-    var value = raw
-    for prefix in ["com.google.", "com.microsoft.", "com.adobe.", "com.openai.", "com."] {
-        if value.lowercased().hasPrefix(prefix) {
-            value = String(value.dropFirst(prefix.count))
-            break
-        }
+    var v=raw; for p in ["com.google.","com.microsoft.","com.adobe.","com.openai.","com."] { if v.lowercased().hasPrefix(p) { v=String(v.dropFirst(p.count)); break } }
+    return v.replacingOccurrences(of: ".ShipIt", with: " updater").replacingOccurrences(of: "-", with: " ").capitalized
+}
+nonisolated func reviewChildren(in root: String, label: String, threshold: Int64 = 100_000_000) -> [Finding] {
+    let fm=FileManager.default; guard let children=try? fm.contentsOfDirectory(atPath: root) else { return [] }
+    return children.compactMap { child in
+        guard !child.hasPrefix(".") else { return nil }; let path=root+"/"+child; let size=itemSize(path); guard size >= threshold else { return nil }
+        return Finding(id:path,name:child,what:"A large item in \(label).",consequence:"If selected, NUKE moves it to Trash so you can recover it.",path:path,bytes:size,kind:.review)
     }
-    value = value.replacingOccurrences(of: ".ShipIt", with: " updater")
-    value = value.replacingOccurrences(of: "-", with: " ")
-    return value.capitalized
 }
 
-@MainActor
-final class Scanner: ObservableObject {
-    @Published var findings: [Finding] = []
-    @Published var scanning = false
-    @Published var status = "Not scanned"
-    @Published var hasScanned = false
-
-    private let fm = FileManager.default
-    private var home: String { fm.homeDirectoryForCurrentUser.path }
-
+@MainActor final class Scanner: ObservableObject {
+    @Published var findings:[Finding]=[]; @Published var storageAreas:[StorageArea]=[]; @Published var scanning=false; @Published var hasScanned=false; @Published var lastError:String?
+    private let fm=FileManager.default; private var home:String { fm.homeDirectoryForCurrentUser.path }
     func scan() {
-        scanning = true
-        status = "Scanning your Mac…"
-        let h = home
-
-        Task.detached(priority: .userInitiated) {
-            let rules: [(String, String, String, String, FindingKind)] = [
-                ("Google Chrome cache", "Temporary browser files.", "Chrome rebuilds these as you browse.", "\(h)/Library/Caches/Google", .nuke),
-                ("Chrome local model", "A model Chrome downloaded to run features on your Mac.", "Chrome may download it again if it needs it.", "\(h)/Library/Application Support/Google/Chrome/OptGuideOnDeviceModel", .nuke),
-                ("Chrome Default website data", "Offline copies and background data saved by websites.", "Sites rebuild it; offline site data may be lost.", "\(h)/Library/Application Support/Google/Chrome/Default/Service Worker", .nuke),
-                ("Chrome Profile 1 website data", "Offline copies and background data saved by websites in Profile 1.", "Sites rebuild it; offline site data may be lost.", "\(h)/Library/Application Support/Google/Chrome/Profile 1/Service Worker", .nuke),
-                ("Chrome Profile 2 website data", "Offline copies and background data saved by websites in Profile 2.", "Sites rebuild it; offline site data may be lost.", "\(h)/Library/Application Support/Google/Chrome/Profile 2/Service Worker", .nuke),
-                ("Claude local VM", "Claude's downloaded local computer environment.", "Claude can download a fresh copy when needed.", "\(h)/Library/Application Support/Claude/vm_bundles", .nuke),
-                ("Claude cache", "Temporary files Claude leaves behind.", "Claude recreates it.", "\(h)/Library/Application Support/Claude/Cache", .nuke),
-                ("Claude code cache", "Compiled interface files used to speed up Claude.", "Claude recreates it.", "\(h)/Library/Application Support/Claude/Code Cache", .nuke),
-                ("Adobe logs", "Diagnostic records from Adobe apps. Not your projects.", "Adobe writes new logs when needed.", "\(h)/Library/Logs/Adobe", .nuke),
-                ("Creative Cloud logs", "Diagnostic records from Creative Cloud.", "Creative Cloud writes new logs later.", "\(h)/Library/Logs/CreativeCloud", .nuke),
-                ("Codex cache", "Temporary files Codex keeps locally.", "Codex recreates it.", "\(h)/Library/Caches/com.openai.codex", .nuke),
-                ("Homebrew cache", "Installers and packages Homebrew already downloaded.", "Homebrew downloads them again if required.", "\(h)/Library/Caches/Homebrew", .nuke),
-                ("Yarn cache", "Packages Yarn downloaded while installing dependencies.", "Yarn downloads them again if required.", "\(h)/Library/Caches/Yarn", .nuke)
-            ]
-
-            var output: [Finding] = []
-            for rule in rules {
-                let size = folderSize(rule.3)
-                if size > 0 {
-                    output.append(Finding(id: rule.3, name: rule.0, what: rule.1, consequence: rule.2, path: rule.3, bytes: size, kind: rule.4))
-                }
-            }
-
-            // Review large third-party caches, but never recurse into Apple/media caches.
-            // This keeps Review useful without triggering macOS Music/Photos/media permissions.
-            let cacheRoot = "\(h)/Library/Caches"
-            if let children = try? FileManager.default.contentsOfDirectory(atPath: cacheRoot) {
-                let knownPaths = Set(output.map(\.path))
-                for child in children {
-                    guard !isProtectedAppleCache(child) else { continue }
-                    let path = cacheRoot + "/" + child
-                    guard !knownPaths.contains(path) else { continue }
-                    let size = folderSize(path)
-                    guard size >= 250_000_000 else { continue }
-                    let appName = friendlyCacheName(child)
-                    output.append(Finding(
-                        id: path,
-                        name: "\(appName) cache",
-                        what: "\(appName) is using a large cache on your Mac.",
-                        consequence: "Review it first. NUKE won't select it automatically.",
-                        path: path,
-                        bytes: size,
-                        kind: .review
-                    ))
-                }
-            }
-
-            output.sort { $0.bytes > $1.bytes }
-            await MainActor.run {
-                self.findings = output
-                self.scanning = false
-                self.hasScanned = true
-                self.status = "Scan complete"
-            }
+        scanning=true; lastError=nil; let h=home
+        Task.detached(priority:.userInitiated) {
+            let rules:[(String,String,String,String)] = [
+                ("Google Chrome cache","Temporary browser files.","Chrome rebuilds these as you browse.","\(h)/Library/Caches/Google"),
+                ("Chrome local model","A model Chrome downloaded to run features locally.","Chrome can download it again.","\(h)/Library/Application Support/Google/Chrome/OptGuideOnDeviceModel"),
+                ("Claude local VM","Claude's downloaded local computer environment.","Claude can download a fresh copy when needed.","\(h)/Library/Application Support/Claude/vm_bundles"),
+                ("Claude cache","Temporary files Claude leaves behind.","Claude recreates it.","\(h)/Library/Application Support/Claude/Cache"),
+                ("Claude code cache","Compiled interface files used to speed up Claude.","Claude recreates it.","\(h)/Library/Application Support/Claude/Code Cache"),
+                ("Adobe logs","Diagnostic records from Adobe apps. Not your projects.","Adobe writes new logs when needed.","\(h)/Library/Logs/Adobe"),
+                ("Creative Cloud logs","Diagnostic records from Creative Cloud.","Creative Cloud writes new logs later.","\(h)/Library/Logs/CreativeCloud"),
+                ("Codex cache","Temporary files Codex keeps locally.","Codex recreates it.","\(h)/Library/Caches/com.openai.codex"),
+                ("Homebrew cache","Installers and packages Homebrew already downloaded.","Homebrew downloads them again if required.","\(h)/Library/Caches/Homebrew"),
+                ("Yarn cache","Packages Yarn downloaded while installing dependencies.","Yarn downloads them again if required.","\(h)/Library/Caches/Yarn")]
+            var out:[Finding]=rules.compactMap { r in let s=itemSize(r.3); return s>0 ? Finding(id:r.3,name:r.0,what:r.1,consequence:r.2,path:r.3,bytes:s,kind:.nuke) : nil }
+            for profile in ["Default","Profile 1","Profile 2"] { let p="\(h)/Library/Application Support/Google/Chrome/\(profile)/Service Worker"; let s=itemSize(p); if s>0 { out.append(Finding(id:p,name:"Chrome \(profile) website data",what:"Offline copies and background website data.",consequence:"Sites can rebuild most of it, but offline site data may be lost.",path:p,bytes:s,kind:.review)) } }
+            let cacheRoot="\(h)/Library/Caches"
+            if let children=try? FileManager.default.contentsOfDirectory(atPath:cacheRoot) { let known=Set(out.map(\.path)); for child in children where !isProtectedAppleCache(child) { let p=cacheRoot+"/"+child; guard !known.contains(p) else { continue }; let s=itemSize(p); guard s>=250_000_000 else { continue }; let app=friendlyCacheName(child); out.append(Finding(id:p,name:"\(app) cache",what:"A large third-party cache.",consequence:"Review it first. NUKE moves it to Trash if selected.",path:p,bytes:s,kind:.review)) } }
+            let specs:[(String,String,String)]=[("Downloads","\(h)/Downloads","arrow.down.circle"),("Documents","\(h)/Documents","doc"),("Desktop","\(h)/Desktop","desktopcomputer"),("Pictures","\(h)/Pictures","photo.on.rectangle"),("Movies","\(h)/Movies","film"),("Music","\(h)/Music","music.note")]
+            var areas:[StorageArea]=[]
+            for spec in specs { let s=itemSize(spec.1); if s>0 { areas.append(StorageArea(id:spec.1,name:spec.0,path:spec.1,bytes:s,icon:spec.2)) }; out.append(contentsOf:reviewChildren(in:spec.1,label:spec.0)) }
+            out.sort{$0.bytes>$1.bytes}; areas.sort{$0.bytes>$1.bytes}
+            await MainActor.run { self.findings=out; self.storageAreas=areas; self.scanning=false; self.hasScanned=true }
         }
     }
-
-    func delete(_ targets: [Finding]) {
-        for target in targets { try? fm.removeItem(atPath: target.path) }
-        scan()
+    func delete(_ targets:[Finding]) {
+        var errors:[String]=[]
+        for t in targets { do { let u=URL(fileURLWithPath:t.path); if t.kind == .review { _=try fm.trashItem(at:u,resultingItemURL:nil) } else { try fm.removeItem(at:u) } } catch { errors.append("\(t.name): \(error.localizedDescription)") } }
+        lastError=errors.isEmpty ? nil : errors.joined(separator:"\n"); scan()
     }
-
-    func reveal(_ finding: Finding) {
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: finding.path)])
-    }
+    func reveal(_ path:String) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath:path)]) }
 }
 
 struct ContentView: View {
-    @StateObject private var scanner = Scanner()
-    @State private var page: Page? = .nuking
-    @State private var selected = Set<String>()
-    @State private var showingPrivacy = false
-    @State private var confirmingDelete = false
-    @AppStorage("ignoredPaths") private var ignoredStore = ""
-    @AppStorage("excludedNukePaths") private var excludedStore = ""
-
-    private var ignored: Set<String> { Set(ignoredStore.split(separator: "\n").map(String.init)) }
-    private var excluded: Set<String> { Set(excludedStore.split(separator: "\n").map(String.init)) }
-    private var activePage: Page { page ?? .nuking }
-    private var nukeItems: [Finding] { scanner.findings.filter { $0.kind == .nuke && !ignored.contains($0.path) } }
-    private var reviewItems: [Finding] { scanner.findings.filter { $0.kind == .review && !ignored.contains($0.path) } }
-    private var ignoredItems: [Finding] { scanner.findings.filter { ignored.contains($0.path) } }
-    private var visible: [Finding] {
-        switch activePage {
-        case .nuking: return nukeItems
-        case .review: return reviewItems
-        case .ignored: return ignoredItems
-        }
+    @StateObject private var scanner=Scanner(); @State private var page:Page? = .nuking; @State private var selected=Set<String>(); @State private var showingPrivacy=false; @State private var confirmingDelete=false; @State private var showingError=false
+    @AppStorage("ignoredPaths") private var ignoredStore=""; @AppStorage("excludedNukePaths") private var excludedStore=""
+    private var ignored:Set<String>{Set(ignoredStore.split(separator:"\n").map(String.init))}; private var excluded:Set<String>{Set(excludedStore.split(separator:"\n").map(String.init))}; private var activePage:Page{page ?? .nuking}
+    private var nukeItems:[Finding]{scanner.findings.filter{$0.kind == .nuke && !ignored.contains($0.path)}}; private var reviewItems:[Finding]{scanner.findings.filter{$0.kind == .review && !ignored.contains($0.path)}}; private var ignoredItems:[Finding]{scanner.findings.filter{ignored.contains($0.path)}}
+    private var visible:[Finding]{switch activePage{case .nuking:return nukeItems;case .review:return reviewItems;case .ignored:return ignoredItems}}
+    private var selectedItems:[Finding]{scanner.findings.filter{selected.contains($0.path)}}; private var selectedBytes:Int64{selectedItems.reduce(0){$0+$1.bytes}}; private var nukeBytes:Int64{nukeItems.reduce(0){$0+$1.bytes}}; private var reviewBytes:Int64{reviewItems.reduce(0){$0+$1.bytes}}; private var ignoredBytes:Int64{ignoredItems.reduce(0){$0+$1.bytes}}; private var allVisibleSelected:Bool{!visible.isEmpty && visible.allSatisfy{selected.contains($0.path)}}
+    var body:some View {
+        NavigationSplitView { sidebar.navigationSplitViewColumnWidth(min:190,ideal:220,max:250) } detail:{ detail }.frame(minWidth:860,minHeight:580)
+            .toolbar{ToolbarItem(placement:.primaryAction){Button(action:runScan){Label(scanner.scanning ? "Scanning…":"Scan",systemImage:"arrow.clockwise")}.disabled(scanner.scanning)}}
+            .sheet(isPresented:$showingPrivacy){PrivacyView()}
+            .confirmationDialog("Nuke \(formatted(selectedBytes))?",isPresented:$confirmingDelete,titleVisibility:.visible){Button(activePage == .review ? "Move to Trash":"Nuke \(formatted(selectedBytes))",role:.destructive){scanner.delete(selectedItems);selected.removeAll()};Button("Cancel",role:.cancel){}} message:{Text(activePage == .review ? "Review items go to Trash, not permanent deletion.":"Known disposable data will be permanently removed.")}
+            .alert("Some items couldn't be removed",isPresented:$showingError){Button("OK") {}} message:{Text(scanner.lastError ?? "Unknown error")}
+            .onChange(of:page){_,_ in syncSelection()}.onChange(of:scanner.findings){_,_ in syncSelection()}.onChange(of:scanner.lastError){_,v in if v != nil { showingError=true }}
     }
-    private var selectedItems: [Finding] { scanner.findings.filter { selected.contains($0.path) } }
-    private var selectedBytes: Int64 { selectedItems.reduce(0) { $0 + $1.bytes } }
-    private var nukeBytes: Int64 { nukeItems.reduce(0) { $0 + $1.bytes } }
-    private var reviewBytes: Int64 { reviewItems.reduce(0) { $0 + $1.bytes } }
-    private var ignoredBytes: Int64 { ignoredItems.reduce(0) { $0 + $1.bytes } }
-
-    var body: some View {
-        NavigationSplitView {
-            sidebar.navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 250)
-        } detail: {
-            detail
-        }
-        .frame(minWidth: 820, minHeight: 560)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: runScan) {
-                    Label(scanner.scanning ? "Scanning…" : "Scan", systemImage: "arrow.clockwise")
-                }
-                .disabled(scanner.scanning)
-            }
-        }
-        .sheet(isPresented: $showingPrivacy) { PrivacyView() }
-        .confirmationDialog("Nuke \(formatted(selectedBytes))?", isPresented: $confirmingDelete, titleVisibility: .visible) {
-            Button("Nuke \(formatted(selectedBytes))", role: .destructive) {
-                scanner.delete(selectedItems)
-                selected.removeAll()
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-        .onChange(of: page) { _, _ in syncSelection() }
-        .onChange(of: scanner.findings) { _, _ in syncSelection() }
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("NUKE").font(.system(size: 22, weight: .bold))
-                Text("Free up space on your Mac.").font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(16)
-
-            List(selection: $page) {
-                Label { HStack { Text("Nuking"); Spacer(); if scanner.hasScanned { Text(formatted(nukeBytes)).foregroundStyle(.secondary) } } } icon: { Image(systemName: Page.nuking.icon) }.tag(Page.nuking)
-                Label { HStack { Text("Review"); Spacer(); if scanner.hasScanned { Text(formatted(reviewBytes)).foregroundStyle(.secondary) } } } icon: { Image(systemName: Page.review.icon) }.tag(Page.review)
-                Label { HStack { Text("Ignored"); Spacer(); if scanner.hasScanned { Text(formatted(ignoredBytes)).foregroundStyle(.secondary) } } } icon: { Image(systemName: Page.ignored.icon) }.tag(Page.ignored)
-            }
-            .listStyle(.sidebar)
-
-            Spacer()
-            Button { showingPrivacy = true } label: { Label("Privacy", systemImage: "hand.raised") }
-                .buttonStyle(.plain)
-                .padding(16)
-        }
-    }
-
-    private var detail: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                if !scanner.hasScanned && !scanner.scanning {
-                    welcome
-                } else {
-                    pageHeader
-                    if activePage == .nuking && !visible.isEmpty { stats }
-                    itemList
-                }
-            }
-            .background(Color(nsColor: .windowBackgroundColor))
-            if scanner.scanning { scanOverlay }
-        }
-    }
-
-    private var scanOverlay: some View {
-        ZStack {
-            Color(nsColor: .windowBackgroundColor).opacity(0.94).ignoresSafeArea()
-            VStack(spacing: 18) {
-                ProgressView().controlSize(.large)
-                Text("Scanning your Mac…").font(.title2).fontWeight(.semibold)
-                Text("Looking through known caches and temporary app data.")
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                ProgressView().progressViewStyle(.linear).frame(width: 300)
-            }
-        }
-    }
-
-    private var welcome: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "internaldrive").font(.system(size: 42)).foregroundStyle(.secondary)
-            Text("See what's eating your Mac.").font(.system(size: 30, weight: .semibold))
-            Text("Scan known caches and temporary app data. No extra access needed.").foregroundStyle(.secondary)
-            Button("Scan Mac", action: runScan).buttonStyle(.borderedProminent).controlSize(.large)
-            Label("Scans locally. Nothing is uploaded.", systemImage: "lock.fill").font(.caption).foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var pageHeader: some View {
-        HStack(spacing: 24) {
-            VStack(alignment: .leading, spacing: 6) {
-                if activePage == .nuking {
-                    Text("\(formatted(nukeBytes)) worth nuking.").font(.system(size: 34, weight: .semibold))
-                    Text("Temporary data apps can recreate. Pre-selected for you.").foregroundStyle(.secondary)
-                } else if activePage == .review {
-                    Text("\(formatted(reviewBytes)) needs your call.").font(.system(size: 34, weight: .semibold))
-                    Text("NUKE won't touch this unless you choose it.").foregroundStyle(.secondary)
-                } else {
-                    Text("\(formatted(ignoredBytes)) ignored.").font(.system(size: 34, weight: .semibold))
-                    Text("NUKE leaves these alone.").foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-            if activePage != .ignored && !selected.isEmpty {
-                Button("Nuke \(formatted(selectedBytes))") { confirmingDelete = true }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-            }
-        }
-        .padding(28)
-    }
-
-    private var stats: some View {
-        HStack(spacing: 0) {
-            Stat(icon: "checkmark.square", value: "\(selected.count)", label: "selected")
-            Divider().frame(height: 42)
-            Stat(icon: "internaldrive", value: formatted(selectedBytes), label: "will be freed")
-            Divider().frame(height: 42)
-            Stat(icon: "arrow.clockwise", value: "Recreatable", label: "apps can rebuild it")
-        }
-        .padding(.vertical, 14)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.35))
-    }
-
-    @ViewBuilder private var itemList: some View {
-        if visible.isEmpty {
-            ContentUnavailableView(activePage == .ignored ? "Nothing ignored" : "Nothing here", systemImage: "checkmark.circle")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            List {
-                if activePage != .ignored {
-                    HStack {
-                        Button(action: toggleAll) { Image(systemName: allVisibleSelected ? "checkmark.square.fill" : "square") }
-                            .buttonStyle(.borderless)
-                        Text(activePage == .nuking ? "Auto-select all" : "Select all")
-                        Spacer()
-                        Text("\(visible.count) items").foregroundStyle(.secondary)
-                    }
-                }
-                ForEach(visible) { finding in
-                    FindingRow(
-                        finding: finding,
-                        selected: selected.contains(finding.path),
-                        page: activePage,
-                        toggle: { toggle(finding) },
-                        reveal: { scanner.reveal(finding) },
-                        ignore: { ignore(finding) },
-                        restore: { restore(finding) }
-                    )
-                }
-            }
-            .listStyle(.inset)
-        }
-    }
-
-    private var allVisibleSelected: Bool { !visible.isEmpty && visible.allSatisfy { selected.contains($0.path) } }
-    private func runScan() { selected.removeAll(); scanner.scan() }
-    private func syncSelection() {
-        if activePage == .nuking { selected = Set(nukeItems.filter { !excluded.contains($0.path) }.map(\.path)) }
-        else { selected.removeAll() }
-    }
-    private func toggle(_ finding: Finding) {
-        if selected.contains(finding.path) {
-            selected.remove(finding.path)
-            if finding.kind == .nuke { var e = excluded; e.insert(finding.path); excludedStore = e.sorted().joined(separator: "\n") }
-        } else {
-            selected.insert(finding.path)
-            if finding.kind == .nuke { var e = excluded; e.remove(finding.path); excludedStore = e.sorted().joined(separator: "\n") }
-        }
-    }
-    private func toggleAll() {
-        if allVisibleSelected { for finding in visible { selected.remove(finding.path) } }
-        else { for finding in visible { selected.insert(finding.path) } }
-    }
-    private func ignore(_ finding: Finding) {
-        var x = ignored
-        x.insert(finding.path)
-        ignoredStore = x.sorted().joined(separator: "\n")
-        selected.remove(finding.path)
-    }
-    private func restore(_ finding: Finding) {
-        var x = ignored
-        x.remove(finding.path)
-        ignoredStore = x.sorted().joined(separator: "\n")
-    }
+    private var sidebar:some View { VStack(alignment:.leading,spacing:0){VStack(alignment:.leading,spacing:3){Text("NUKE").font(.system(size:22,weight:.bold));Text("Free up space on your Mac.").font(.caption).foregroundStyle(.secondary)}.padding(16);List(selection:$page){side(.nuking,nukeBytes);side(.review,reviewBytes);side(.ignored,ignoredBytes)}.listStyle(.sidebar);Spacer();Button{showingPrivacy=true}label:{Label("Privacy",systemImage:"hand.raised")}.buttonStyle(.plain).padding(16)} }
+    private func side(_ p:Page,_ b:Int64)->some View{Label{HStack{Text(p.rawValue);Spacer();if scanner.hasScanned{Text(formatted(b)).foregroundStyle(.secondary)}}}icon:{Image(systemName:p.icon)}.tag(p)}
+    private var detail:some View { ZStack{VStack(spacing:0){if !scanner.hasScanned && !scanner.scanning{welcome}else{header;if activePage == .review && !scanner.storageAreas.isEmpty{storageStrip};if activePage == .nuking && !visible.isEmpty{stats};items}}.background(Color(nsColor:.windowBackgroundColor));if scanner.scanning{overlay}} }
+    private var welcome:some View { VStack(spacing:16){Image(systemName:"internaldrive").font(.system(size:42)).foregroundStyle(.secondary);Text("See what's eating your Mac.").font(.system(size:30,weight:.semibold));Text("Scan caches, app data and large personal files. Nothing is removed until you choose it.").foregroundStyle(.secondary);Button("Scan Mac",action:runScan).buttonStyle(.borderedProminent).controlSize(.large);Label("Scans locally. Nothing is uploaded.",systemImage:"lock.fill").font(.caption).foregroundStyle(.tertiary)}.frame(maxWidth:.infinity,maxHeight:.infinity) }
+    private var overlay:some View { ZStack{Color(nsColor:.windowBackgroundColor).opacity(.94).ignoresSafeArea();VStack(spacing:18){ProgressView().controlSize(.large);Text("Scanning your Mac…").font(.title2).fontWeight(.semibold);Text("Measuring caches, app data and your biggest folders.").foregroundStyle(.secondary);ProgressView().progressViewStyle(.linear).frame(width:300)}} }
+    private var header:some View { HStack(spacing:24){VStack(alignment:.leading,spacing:6){switch activePage{case .nuking:Text("\(formatted(nukeBytes)) worth nuking.").font(.system(size:34,weight:.semibold));Text("Known disposable data. Pre-selected for you.").foregroundStyle(.secondary);case .review:Text("\(formatted(reviewBytes)) needs your call.").font(.system(size:34,weight:.semibold));Text("Large files and uncertain data. Nothing here is pre-selected.").foregroundStyle(.secondary);case .ignored:Text("\(formatted(ignoredBytes)) ignored.").font(.system(size:34,weight:.semibold));Text("NUKE leaves these alone.").foregroundStyle(.secondary)}};Spacer();if activePage != .ignored && !selected.isEmpty{Button(activePage == .review ? "Trash \(formatted(selectedBytes))":"Nuke \(formatted(selectedBytes))"){confirmingDelete=true}.buttonStyle(.borderedProminent).controlSize(.large)}}.padding(28) }
+    private var storageStrip:some View { ScrollView(.horizontal,showsIndicators:false){HStack(spacing:10){ForEach(scanner.storageAreas){a in Button{scanner.reveal(a.path)}label:{HStack(spacing:10){Image(systemName:a.icon).font(.title3);VStack(alignment:.leading,spacing:2){Text(a.name).fontWeight(.medium);Text(formatted(a.bytes)).font(.caption).foregroundStyle(.secondary)}}.padding(.horizontal,13).padding(.vertical,10).background(Color(nsColor:.controlBackgroundColor)).clipShape(RoundedRectangle(cornerRadius:9))}.buttonStyle(.plain).help("Show \(a.name) in Finder")}}.padding(.horizontal,28).padding(.bottom,14)} }
+    private var stats:some View { HStack(spacing:0){Stat(icon:"checkmark.square",value:"\(selected.count)",label:"selected");Divider().frame(height:42);Stat(icon:"internaldrive",value:formatted(selectedBytes),label:"will be freed");Divider().frame(height:42);Stat(icon:"arrow.clockwise",value:"Recreatable",label:"apps can rebuild it")}.padding(.vertical,14).background(Color(nsColor:.controlBackgroundColor).opacity(.35)) }
+    @ViewBuilder private var items:some View { if visible.isEmpty{ContentUnavailableView(activePage == .ignored ? "Nothing ignored":"Nothing here",systemImage:"checkmark.circle").frame(maxWidth:.infinity,maxHeight:.infinity)}else{List{if activePage != .ignored{HStack{Button(action:toggleAll){Image(systemName:allVisibleSelected ? "checkmark.square.fill":"square")}.buttonStyle(.borderless);Text(activePage == .nuking ? "Auto-select all":"Select all");Spacer();Text("\(visible.count) items").foregroundStyle(.secondary)}.font(.caption).padding(.vertical,4)};ForEach(visible){f in FindingRow(finding:f,selected:selected.contains(f.path),selectable:activePage != .ignored){toggle(f)}.contextMenu{Button("Show in Finder"){scanner.reveal(f.path)};Divider();Button(activePage == .ignored ? "Stop Ignoring":"Ignore"){toggleIgnored(f.path)}}}}.listStyle(.inset)} }
+    private func runScan(){selected.removeAll();scanner.scan()}
+    private func toggle(_ f:Finding){if selected.contains(f.path){selected.remove(f.path)}else{selected.insert(f.path)};if f.kind == .nuke{var s=excluded;if selected.contains(f.path){s.remove(f.path)}else{s.insert(f.path)};excludedStore=s.sorted().joined(separator:"\n")}}
+    private func toggleAll(){let wasAll=allVisibleSelected;if wasAll{visible.forEach{selected.remove($0.path)}}else{visible.forEach{selected.insert($0.path)}};if activePage == .nuking{var s=excluded;if wasAll{visible.forEach{s.insert($0.path)}}else{visible.forEach{s.remove($0.path)}};excludedStore=s.sorted().joined(separator:"\n")}}
+    private func toggleIgnored(_ p:String){var s=ignored;if s.contains(p){s.remove(p)}else{s.insert(p);selected.remove(p)};ignoredStore=s.sorted().joined(separator:"\n")}
+    private func syncSelection(){guard scanner.hasScanned else{return};selected=activePage == .nuking ? Set(nukeItems.filter{!excluded.contains($0.path)}.map(\.path)) : []}
 }
 
-struct Stat: View {
-    let icon: String, value: String, label: String
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).foregroundStyle(.secondary)
-            VStack(alignment: .leading) {
-                Text(value).fontWeight(.semibold)
-                Text(label).font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-struct FindingRow: View {
-    let finding: Finding
-    let selected: Bool
-    let page: Page
-    let toggle: () -> Void
-    let reveal: () -> Void
-    let ignore: () -> Void
-    let restore: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            if page != .ignored {
-                Button(action: toggle) {
-                    Image(systemName: selected ? "checkmark.square.fill" : "square")
-                }
-                .buttonStyle(.borderless)
-                .frame(width: 26)
-            } else {
-                Color.clear.frame(width: 26, height: 1)
-            }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(finding.name).fontWeight(.medium)
-                Text(finding.what).font(.caption).foregroundStyle(.secondary)
-                Text(finding.consequence).font(.caption).foregroundStyle(.tertiary)
-                Text(shortPath(finding.path))
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(formatted(finding.bytes))
-                .font(.system(.body, design: .monospaced, weight: .semibold))
-                .monospacedDigit()
-                .frame(width: 112, alignment: .trailing)
-
-            Menu {
-                Button("Show in Finder", action: reveal)
-                if page == .ignored {
-                    Button("Stop Ignoring", action: restore)
-                } else {
-                    Button("Ignore on future scans", action: ignore)
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .frame(width: 36, alignment: .center)
-        }
-        .padding(.vertical, 7)
-        .contentShape(Rectangle())
-        .onTapGesture { if page != .ignored { toggle() } }
-    }
-}
-
-struct PrivacyView: View {
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Image(systemName: "hand.raised.fill").font(.system(size: 30)).foregroundStyle(.blue)
-            Text("Your files stay yours.").font(.title2).fontWeight(.semibold)
-            Text("NUKE scans locally. It doesn't upload your files or require an account.").foregroundStyle(.secondary)
-            Button("Done") { dismiss() }.frame(maxWidth: .infinity, alignment: .trailing)
-        }
-        .padding(28)
-        .frame(width: 440)
-    }
-}
-
-private func shortPath(_ path: String) -> String {
-    path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
-}
-
-private func formatted(_ bytes: Int64) -> String {
-    ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-}
+struct FindingRow:View { let finding:Finding;let selected:Bool;let selectable:Bool;let toggle:()->Void;var body:some View{HStack(spacing:12){if selectable{Button(action:toggle){Image(systemName:selected ? "checkmark.square.fill":"square")}.buttonStyle(.borderless)};VStack(alignment:.leading,spacing:4){Text(finding.name).fontWeight(.medium);Text(finding.what).font(.caption).foregroundStyle(.secondary);Text(finding.consequence).font(.caption2).foregroundStyle(.tertiary);Text(shortPath(finding.path)).font(.caption2).foregroundStyle(.quaternary).lineLimit(1).truncationMode(.middle)};Spacer(minLength:16);Text(formatted(finding.bytes)).font(.system(.body,design:.monospaced)).fontWeight(.semibold);Menu{Button("Show in Finder"){NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath:finding.path)])}}label:{Image(systemName:"ellipsis.circle")}.menuStyle(.borderlessButton).fixedSize()}.padding(.vertical,8)} }
+struct Stat:View{let icon,value,label:String;var body:some View{HStack(spacing:10){Image(systemName:icon).foregroundStyle(.secondary);VStack(alignment:.leading){Text(value).fontWeight(.semibold);Text(label).font(.caption).foregroundStyle(.secondary)}}.frame(maxWidth:.infinity)}}
+struct PrivacyView:View{@Environment(\.dismiss)private var dismiss;var body:some View{VStack(alignment:.leading,spacing:18){Image(systemName:"hand.raised.fill").font(.system(size:36)).foregroundStyle(.secondary);Text("Your files stay yours.").font(.title).fontWeight(.semibold);Text("NUKE scans locally. It does not upload file names, paths or contents. No account. No telemetry. No cloud scanner.").foregroundStyle(.secondary);Divider();Label("No Full Disk Access required",systemImage:"checkmark.circle");Label("Review files are moved to Trash",systemImage:"trash");Label("Nothing in Review is pre-selected",systemImage:"checkmark.square");HStack{Spacer();Button("Done"){dismiss()}.keyboardShortcut(.defaultAction)}}.padding(28).frame(width:440)}}
+func shortPath(_ p:String)->String{p.replacingOccurrences(of:FileManager.default.homeDirectoryForCurrentUser.path,with:"~")};func formatted(_ b:Int64)->String{ByteCountFormatter.string(fromByteCount:b,countStyle:.file)}

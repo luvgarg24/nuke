@@ -1,22 +1,18 @@
 import SwiftUI
 import AppKit
 
-private let acid = Color(red: 0.87, green: 1.0, blue: 0.0)
-private let ink = Color(red: 0.035, green: 0.035, blue: 0.035)
-
 @main
 struct NukeApp: App {
     var body: some Scene {
         WindowGroup { ContentView() }
-            .windowStyle(.hiddenTitleBar)
-            .defaultSize(width: 980, height: 720)
+            .defaultSize(width: 760, height: 620)
     }
 }
 
 enum Safety: String, CaseIterable, Sendable {
-    case nuke = "NUKE"
-    case review = "REVIEW"
-    case keep = "KEEP"
+    case nuke = "Safe"
+    case review = "Review"
+    case keep = "Keep"
 }
 
 struct Finding: Identifiable, Hashable, Sendable {
@@ -33,21 +29,17 @@ nonisolated func folderSize(_ path: String) -> Int64 {
     let fm = FileManager.default
     var isDirectory: ObjCBool = false
     guard fm.fileExists(atPath: path, isDirectory: &isDirectory) else { return 0 }
-
     if !isDirectory.boolValue {
         return (try? fm.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0
     }
-
     guard let enumerator = fm.enumerator(
         at: URL(fileURLWithPath: path),
         includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
-        options: [.skipsHiddenFiles]
+        options: []
     ) else { return 0 }
-
     var total: Int64 = 0
     for case let url as URL in enumerator {
-        if let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
-           values.isRegularFile == true {
+        if let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]), values.isRegularFile == true {
             total += Int64(values.fileSize ?? 0)
         }
     }
@@ -58,42 +50,39 @@ nonisolated func folderSize(_ path: String) -> Int64 {
 final class Scanner: ObservableObject {
     @Published var findings: [Finding] = []
     @Published var scanning = false
-    @Published var progress = "Ready to scan"
+    @Published var status = "Ready"
     @Published var lastFreed: Int64 = 0
+    @Published var cleanupError: String?
 
     private let fm = FileManager.default
     private var home: String { fm.homeDirectoryForCurrentUser.path }
 
-    var nukeBytes: Int64 {
-        findings.filter { $0.safety == .nuke }.reduce(0) { $0 + $1.bytes }
-    }
-
-    var reviewBytes: Int64 {
-        findings.filter { $0.safety == .review }.reduce(0) { $0 + $1.bytes }
-    }
+    var safeBytes: Int64 { findings.filter { $0.safety == .nuke }.reduce(0) { $0 + $1.bytes } }
+    var reviewBytes: Int64 { findings.filter { $0.safety == .review }.reduce(0) { $0 + $1.bytes } }
 
     func scan() {
         scanning = true
-        progress = "Looking under the couch…"
+        status = "Scanning…"
         lastFreed = 0
+        cleanupError = nil
         let h = home
 
         Task.detached(priority: .userInitiated) {
             let rules: [(String, String, String, Safety, Bool)] = [
-                ("Google Chrome", "Browser cache · recreated automatically", "\(h)/Library/Caches/Google", .nuke, true),
-                ("Chrome on-device model", "Downloaded local model · Chrome can fetch it again", "\(h)/Library/Application Support/Google/Chrome/OptGuideOnDeviceModel", .nuke, true),
-                ("Chrome · Default", "Offline website data · recreated as you browse", "\(h)/Library/Application Support/Google/Chrome/Default/Service Worker", .nuke, true),
-                ("Chrome · Profile 1", "Offline website data · recreated as you browse", "\(h)/Library/Application Support/Google/Chrome/Profile 1/Service Worker", .nuke, true),
-                ("Chrome · Profile 2", "Offline website data · recreated as you browse", "\(h)/Library/Application Support/Google/Chrome/Profile 2/Service Worker", .nuke, true),
-                ("Claude local VM", "Local environment · Claude can download it again", "\(h)/Library/Application Support/Claude/vm_bundles", .nuke, true),
-                ("Claude cache", "Temporary application cache", "\(h)/Library/Application Support/Claude/Cache", .nuke, true),
-                ("Claude code cache", "Compiled app cache · recreated automatically", "\(h)/Library/Application Support/Claude/Code Cache", .nuke, true),
-                ("Adobe logs", "Diagnostic logs · not your projects", "\(h)/Library/Logs/Adobe", .nuke, true),
-                ("Creative Cloud logs", "Creative Cloud diagnostic logs", "\(h)/Library/Logs/CreativeCloud", .nuke, true),
-                ("Codex cache", "Temporary Codex data", "\(h)/Library/Caches/com.openai.codex", .nuke, true),
-                ("Homebrew cache", "Downloaded package cache", "\(h)/Library/Caches/Homebrew", .nuke, true),
-                ("Yarn cache", "Downloaded package cache", "\(h)/Library/Caches/Yarn", .nuke, true),
-                ("Downloads", "Your files · look before you launch", "\(h)/Downloads", .review, false)
+                ("Google Chrome cache", "Temporary browser files", "\(h)/Library/Caches/Google", .nuke, true),
+                ("Chrome local model", "Downloaded model; Chrome can restore it", "\(h)/Library/Application Support/Google/Chrome/OptGuideOnDeviceModel", .nuke, true),
+                ("Chrome Default website data", "Offline website cache", "\(h)/Library/Application Support/Google/Chrome/Default/Service Worker", .nuke, true),
+                ("Chrome Profile 1 website data", "Offline website cache", "\(h)/Library/Application Support/Google/Chrome/Profile 1/Service Worker", .nuke, true),
+                ("Chrome Profile 2 website data", "Offline website cache", "\(h)/Library/Application Support/Google/Chrome/Profile 2/Service Worker", .nuke, true),
+                ("Claude local VM", "Local environment; Claude can restore it", "\(h)/Library/Application Support/Claude/vm_bundles", .nuke, true),
+                ("Claude cache", "Temporary app files", "\(h)/Library/Application Support/Claude/Cache", .nuke, true),
+                ("Claude code cache", "Recreated automatically", "\(h)/Library/Application Support/Claude/Code Cache", .nuke, true),
+                ("Adobe logs", "Diagnostic logs", "\(h)/Library/Logs/Adobe", .nuke, true),
+                ("Creative Cloud logs", "Diagnostic logs", "\(h)/Library/Logs/CreativeCloud", .nuke, true),
+                ("Codex cache", "Temporary app files", "\(h)/Library/Caches/com.openai.codex", .nuke, true),
+                ("Homebrew cache", "Downloaded package files", "\(h)/Library/Caches/Homebrew", .nuke, true),
+                ("Yarn cache", "Downloaded package files", "\(h)/Library/Caches/Yarn", .nuke, true),
+                ("Downloads", "Your files; review manually", "\(h)/Downloads", .review, false)
             ]
 
             var output: [Finding] = []
@@ -112,7 +101,7 @@ final class Scanner: ObservableObject {
                     if known.contains(path) { continue }
                     let size = folderSize(path)
                     if size >= 250_000_000 {
-                        output.append(Finding(name: child, detail: "Large app cache · review if you don't recognize it", path: path, bytes: size, safety: .review, regenerable: false))
+                        output.append(Finding(name: child, detail: "Large application cache", path: path, bytes: size, safety: .review, regenerable: false))
                     }
                 }
             }
@@ -121,21 +110,25 @@ final class Scanner: ObservableObject {
             await MainActor.run {
                 self.findings = output
                 self.scanning = false
-                self.progress = "Scan complete"
+                self.status = "Scan complete"
             }
         }
     }
 
-    func nukeSafe() {
+    func cleanSafe() {
         let targets = findings.filter { $0.safety == .nuke && $0.regenerable }
         var freed: Int64 = 0
+        var failures: [String] = []
         for target in targets {
             do {
                 try fm.removeItem(atPath: target.path)
                 freed += target.bytes
-            } catch { }
+            } catch {
+                failures.append(target.name)
+            }
         }
         lastFreed = freed
+        if !failures.isEmpty { cleanupError = "Couldn’t remove: " + failures.joined(separator: ", ") }
         scan()
     }
 
@@ -146,190 +139,147 @@ final class Scanner: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var scanner = Scanner()
-    @State private var privacy = false
-    @State private var tab: Safety? = nil
+    @State private var filter: Safety? = nil
+    @State private var showingPrivacy = false
+    @State private var confirmingClean = false
 
-    private var shown: [Finding] {
-        guard let tab else { return scanner.findings }
-        return scanner.findings.filter { $0.safety == tab }
-    }
-
-    private var amountText: String {
-        guard !scanner.findings.isEmpty else { return "—" }
-        return ByteCountFormatter.string(fromByteCount: scanner.nukeBytes, countStyle: .file)
+    private var visibleFindings: [Finding] {
+        guard let filter else { return scanner.findings }
+        return scanner.findings.filter { $0.safety == filter }
     }
 
     var body: some View {
-        ZStack {
-            ink.ignoresSafeArea()
-            VStack(spacing: 0) {
-                header
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 26) {
-                        hero
-                        if scanner.scanning {
-                            ProgressView().tint(acid).scaleEffect(x: 1, y: 1.5).frame(maxWidth: .infinity)
-                        }
-                        if scanner.lastFreed > 0 { successBanner }
-                        filters
-                        results
-                    }
-                    .padding(.horizontal, 36)
-                    .padding(.vertical, 24)
+        VStack(spacing: 0) {
+            summary
+            Divider()
+            controls
+            Divider()
+            results
+            Divider()
+            footer
+        }
+        .frame(minWidth: 640, minHeight: 500)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    showingPrivacy = true
+                } label: {
+                    Label("Privacy", systemImage: "hand.raised")
                 }
-                statusBar
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: scanner.scan) {
+                    Label(scanner.scanning ? "Scanning…" : "Scan", systemImage: "arrow.clockwise")
+                }
+                .disabled(scanner.scanning)
             }
         }
-        .preferredColorScheme(.dark)
-        .sheet(isPresented: $privacy) { PrivacyView() }
-    }
-
-    private var header: some View {
-        HStack(spacing: 18) {
-            Text("NUKE.").font(.system(size: 24, weight: .black, design: .rounded))
-            Spacer()
-            Button(action: { privacy = true }) {
-                Label("Privacy", systemImage: "lock.fill")
-            }
-            .buttonStyle(GhostButton())
-
-            Button(action: scanner.scan) {
-                Label(scanner.scanning ? "SCANNING" : "SCAN", systemImage: "arrow.clockwise")
-            }
-            .buttonStyle(GhostButton())
-            .disabled(scanner.scanning)
-        }
-        .padding(.horizontal, 30)
-        .frame(height: 72)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+        .sheet(isPresented: $showingPrivacy) { PrivacyView() }
+        .confirmationDialog(
+            "Remove safe temporary files?",
+            isPresented: $confirmingClean,
+            titleVisibility: .visible
+        ) {
+            Button("Remove \(formatted(scanner.safeBytes))", role: .destructive) { scanner.cleanSafe() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("NUKE will only remove items marked Safe. Review items are left untouched.")
         }
     }
 
-    private var hero: some View {
-        HStack(alignment: .bottom) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(scanner.findings.isEmpty ? "READY WHEN YOU ARE" : "READY TO NUKE")
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(2)
+    private var summary: some View {
+        HStack(spacing: 28) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("NUKE")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
-                Text(amountText)
-                    .font(.system(size: 64, weight: .bold, design: .rounded))
-                    .tracking(-3)
-                Text(scanner.findings.isEmpty ? "Find what's eating your Mac." : "Known junk. Safe to regenerate.")
-                    .foregroundStyle(.secondary)
+                if scanner.findings.isEmpty {
+                    Text("Free up space on your Mac")
+                        .font(.system(size: 28, weight: .semibold))
+                    Text("Find temporary files and storage worth reviewing.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(formatted(scanner.safeBytes)) can be removed")
+                        .font(.system(size: 28, weight: .semibold))
+                    Text("\(formatted(scanner.reviewBytes)) more is worth reviewing.")
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
-            Button(action: primaryAction) {
-                Text(scanner.findings.isEmpty ? "SCAN MY MAC →" : "NUKE \(ByteCountFormatter.string(fromByteCount: scanner.nukeBytes, countStyle: .file)) →")
+            if scanner.findings.isEmpty {
+                Button("Scan Mac", action: scanner.scan)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(scanner.scanning)
+            } else {
+                Button("Clean Up…") { confirmingClean = true }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(scanner.scanning || scanner.safeBytes == 0)
             }
-            .buttonStyle(NukeButton())
-            .disabled(scanner.scanning || (!scanner.findings.isEmpty && scanner.nukeBytes == 0))
         }
-        .padding(.top, 22)
+        .padding(28)
     }
 
-    private func primaryAction() {
-        if scanner.findings.isEmpty { scanner.scan() }
-        else { scanner.nukeSafe() }
-    }
-
-    private var successBanner: some View {
+    private var controls: some View {
         HStack {
-            Text("WOOF.").font(.title2).fontWeight(.black)
-            Text("\(ByteCountFormatter.string(fromByteCount: scanner.lastFreed, countStyle: .file)) nuked.").foregroundStyle(.secondary)
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(acid.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(acid.opacity(0.25)))
-    }
-
-    private var filters: some View {
-        HStack(spacing: 7) {
-            Chip("ALL", tab == nil) { tab = nil }
-            ForEach(Safety.allCases, id: \.self) { safety in
-                Chip(safety.rawValue, tab == safety) { tab = safety }
+            Picker("Show", selection: $filter) {
+                Text("All").tag(Safety?.none)
+                Text("Safe").tag(Safety?.some(.nuke))
+                Text("Review").tag(Safety?.some(.review))
+                Text("Keep").tag(Safety?.some(.keep))
             }
+            .pickerStyle(.segmented)
+            .frame(width: 300)
             Spacer()
-            if scanner.reviewBytes > 0 {
-                Text("\(ByteCountFormatter.string(fromByteCount: scanner.reviewBytes, countStyle: .file)) needs review")
-                    .font(.caption)
+            if scanner.scanning {
+                ProgressView().controlSize(.small)
+                Text("Scanning…").foregroundStyle(.secondary)
+            } else if !scanner.findings.isEmpty {
+                Text("\(scanner.findings.count) items")
                     .foregroundStyle(.secondary)
             }
         }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.35))
     }
 
     @ViewBuilder private var results: some View {
         if scanner.findings.isEmpty && !scanner.scanning {
-            EmptyState(scan: scanner.scan)
+            ContentUnavailableView(
+                "Ready to scan",
+                systemImage: "internaldrive",
+                description: Text("Scanning happens locally on this Mac.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if scanner.scanning && scanner.findings.isEmpty {
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("Checking application data and caches…")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            LazyVStack(spacing: 0) {
-                ForEach(shown) { finding in
-                    FindingRow(finding: finding, reveal: { scanner.reveal(finding) })
-                }
+            List(visibleFindings) { finding in
+                FindingRow(finding: finding) { scanner.reveal(finding) }
             }
-            .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.08)))
+            .listStyle(.inset)
         }
     }
 
-    private var statusBar: some View {
-        HStack(spacing: 8) {
-            Circle().fill(acid).frame(width: 6, height: 6)
-            Text("100% LOCAL").font(.system(size: 10, weight: .bold)).tracking(1)
-            Text("·  NO UPLOADS  ·  NO ACCOUNT").font(.system(size: 10)).foregroundStyle(.secondary)
+    private var footer: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "lock.fill")
+            Text("Scans locally. Nothing is uploaded.")
             Spacer()
-            Text(scanner.progress).font(.caption).foregroundStyle(.secondary)
+            Text(scanner.status)
         }
-        .padding(.horizontal, 30)
-        .frame(height: 48)
-        .background(Color.white.opacity(0.025))
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
-        }
-    }
-}
-
-struct EmptyState: View {
-    let scan: () -> Void
-    var body: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                Circle().stroke(Color.white.opacity(0.08), lineWidth: 1).frame(width: 100, height: 100)
-                Image(systemName: "sparkles").font(.system(size: 38)).foregroundStyle(acid)
-            }
-            Text("Nothing scanned yet.").font(.title2).fontWeight(.bold)
-            Text("NUKE reads storage metadata locally and tells you what can go.\nNothing leaves this Mac.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-            Button("START SCAN", action: scan).buttonStyle(GhostButton())
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 60)
-    }
-}
-
-struct Chip: View {
-    let title: String
-    let active: Bool
-    let action: () -> Void
-
-    init(_ title: String, _ active: Bool, _ action: @escaping () -> Void) {
-        self.title = title
-        self.active = active
-        self.action = action
-    }
-
-    var body: some View {
-        Button(title, action: action)
-            .font(.system(size: 10, weight: .bold))
-            .buttonStyle(.plain)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(active ? Color.white : Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
-            .foregroundStyle(active ? ink : Color.secondary)
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.09)))
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 18)
+        .frame(height: 38)
     }
 }
 
@@ -337,60 +287,54 @@ struct FindingRow: View {
     let finding: Finding
     let reveal: () -> Void
 
+    private var icon: String {
+        switch finding.safety {
+        case .nuke: return "checkmark.circle.fill"
+        case .review: return "exclamationmark.circle"
+        case .keep: return "lock.circle"
+        }
+    }
+
+    private var tint: Color {
+        switch finding.safety {
+        case .nuke: return .green
+        case .review: return .orange
+        case .keep: return .secondary
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 15) {
-            ZStack {
-                Circle().fill(finding.safety == .nuke ? acid : Color.white.opacity(0.08)).frame(width: 28, height: 28)
-                Image(systemName: finding.safety == .nuke ? "checkmark" : "questionmark")
-                    .font(.caption).fontWeight(.bold)
-                    .foregroundStyle(finding.safety == .nuke ? ink : Color.secondary)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(finding.name).font(.system(size: 14, weight: .semibold))
-                Text(finding.detail).font(.caption).foregroundStyle(.secondary)
-                Text(finding.path).font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary).lineLimit(1)
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 17))
+                .foregroundStyle(tint)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(finding.name).fontWeight(.medium)
+                Text(finding.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer()
-            Text(ByteCountFormatter.string(fromByteCount: finding.bytes, countStyle: .file))
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
+            Text(formatted(finding.bytes))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
             Text(finding.safety.rawValue)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(finding.safety == .nuke ? acid : Color.secondary)
-                .frame(width: 52)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 48, alignment: .trailing)
             Button(action: reveal) {
-                Image(systemName: "folder").foregroundStyle(.secondary)
+                Image(systemName: "folder")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
+            .help(finding.path)
         }
-        .padding(.horizontal, 17)
-        .frame(minHeight: 78)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1).padding(.leading, 60)
+        .padding(.vertical, 5)
+        .contextMenu {
+            Button("Show in Finder", action: reveal)
+            Text(finding.path)
         }
-    }
-}
-
-struct NukeButton: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .black))
-            .foregroundStyle(ink)
-            .padding(.horizontal, 22)
-            .frame(height: 48)
-            .background(acid, in: RoundedRectangle(cornerRadius: 10))
-            .opacity(configuration.isPressed ? 0.7 : 1.0)
-    }
-}
-
-struct GhostButton: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 13)
-            .frame(height: 34)
-            .background(Color.white.opacity(configuration.isPressed ? 0.1 : 0.045), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.09)))
     }
 }
 
@@ -398,40 +342,33 @@ struct PrivacyView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ZStack {
-            ink.ignoresSafeArea()
-            VStack(spacing: 20) {
-                ZStack {
-                    Circle().fill(acid.opacity(0.1)).frame(width: 90, height: 90)
-                    Image(systemName: "lock.shield.fill").font(.system(size: 38)).foregroundStyle(acid)
-                }
-                Text("Your files stay yours.").font(.system(size: 34, weight: .bold, design: .rounded))
-                Text("NUKE needs Full Disk Access only for a deeper scan of macOS-protected folders. Nothing leaves your Mac. NUKE doesn't upload, store, or share your files or file data.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: 500)
-                HStack(spacing: 22) {
-                    Label("100% local", systemImage: "checkmark")
-                    Label("No uploads", systemImage: "checkmark")
-                    Label("No account", systemImage: "checkmark")
-                }
-                .font(.caption).fontWeight(.bold)
-                .foregroundStyle(acid)
-                HStack {
-                    Button("Not now") { dismiss() }.buttonStyle(GhostButton())
-                    Button("GRANT FULL DISK ACCESS →") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-                            NSWorkspace.shared.open(url)
-                        }
-                        dismiss()
+        VStack(alignment: .leading, spacing: 18) {
+            Image(systemName: "hand.raised.fill")
+                .font(.system(size: 32))
+                .foregroundStyle(.blue)
+            Text("Your files stay yours.")
+                .font(.title2)
+                .fontWeight(.semibold)
+            Text("NUKE scans storage locally. It doesn't upload your files or require an account. Full Disk Access is optional and can help NUKE inspect protected locations.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Not Now") { dismiss() }
+                Spacer()
+                Button("Open Full Disk Access…") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                        NSWorkspace.shared.open(url)
                     }
-                    .buttonStyle(NukeButton())
+                    dismiss()
                 }
-                Text("You can revoke access anytime in System Settings.").font(.caption2).foregroundStyle(.tertiary)
+                .buttonStyle(.borderedProminent)
             }
-            .padding(45)
         }
-        .frame(width: 650, height: 440)
-        .preferredColorScheme(.dark)
+        .padding(28)
+        .frame(width: 440)
     }
+}
+
+private func formatted(_ bytes: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
 }

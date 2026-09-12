@@ -101,12 +101,15 @@ nonisolated func folderSize(_ path: String) -> Int64 {
 }
 
 struct ContentView: View {
-    @StateObject private var scanner=Scanner()
-    @State private var page:Page? = .nuking
-    @State private var selected=Set<String>()
-    @State private var showingPrivacy=false, showingDeepAccess=false, confirmingDelete=false
-    @AppStorage("ignoredPaths") private var ignoredStore=""
-    @AppStorage("excludedNukePaths") private var excludedStore=""
+    @StateObject private var scanner = Scanner()
+    @State private var page: Page? = .nuking
+    @State private var selected = Set<String>()
+    @State private var showingPrivacy = false
+    @State private var showingDeepAccess = false
+    @State private var confirmingDelete = false
+    @AppStorage("ignoredPaths") private var ignoredStore = ""
+    @AppStorage("excludedNukePaths") private var excludedStore = ""
+
     private var ignored:Set<String>{Set(ignoredStore.split(separator:"\n").map(String.init))}
     private var excluded:Set<String>{Set(excludedStore.split(separator:"\n").map(String.init))}
     private var activePage:Page{page ?? .nuking}

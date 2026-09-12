@@ -16,12 +16,15 @@ struct Finding: Identifiable, Hashable, Sendable { let id, name, what, consequen
 struct StorageArea: Identifiable, Hashable, Sendable { let id, name, path: String; let bytes: Int64; let icon: String }
 
 nonisolated func itemSize(_ path: String) -> Int64 {
-    let fm = FileManager.default; var isDir: ObjCBool = false
+    let fm = FileManager.default
+    var isDir: ObjCBool = false
     guard fm.fileExists(atPath: path, isDirectory: &isDir) else { return 0 }
     if !isDir.boolValue { return (try? fm.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0 }
-    guard let e = fm.enumerator(at: URL(fileURLWithPath: path), includingPropertiesForKeys: [.fileSizeKey,.isRegularFileKey], options: [.skipsPackageDescendants]) else { return 0 }
+    guard let e = fm.enumerator(at: URL(fileURLWithPath: path), includingPropertiesForKeys: [.fileSizeKey,.isRegularFileKey], options: []) else { return 0 }
     var total: Int64 = 0
-    for case let u as URL in e { if let v = try? u.resourceValues(forKeys: [.fileSizeKey,.isRegularFileKey]), v.isRegularFile == true { total += Int64(v.fileSize ?? 0) } }
+    for case let u as URL in e {
+        if let v = try? u.resourceValues(forKeys: [.fileSizeKey,.isRegularFileKey]), v.isRegularFile == true { total += Int64(v.fileSize ?? 0) }
+    }
     return total
 }
 nonisolated func isProtectedAppleCache(_ name: String) -> Bool {
@@ -32,16 +35,25 @@ nonisolated func friendlyCacheName(_ raw: String) -> String {
     return v.replacingOccurrences(of: ".ShipIt", with: " updater").replacingOccurrences(of: "-", with: " ").capitalized
 }
 nonisolated func reviewChildren(in root: String, label: String, threshold: Int64 = 100_000_000) -> [Finding] {
-    let fm=FileManager.default; guard let children=try? fm.contentsOfDirectory(atPath: root) else { return [] }
+    let fm=FileManager.default
+    guard let children=try? fm.contentsOfDirectory(atPath: root) else { return [] }
     return children.compactMap { child in
-        guard !child.hasPrefix(".") else { return nil }; let path=root+"/"+child; let size=itemSize(path); guard size >= threshold else { return nil }
+        guard !child.hasPrefix(".") else { return nil }
+        let path=root+"/"+child; let size=itemSize(path)
+        guard size >= threshold else { return nil }
         return Finding(id:path,name:child,what:"A large item in \(label).",consequence:"If selected, NUKE moves it to Trash so you can recover it.",path:path,bytes:size,kind:.review)
     }
 }
 
 @MainActor final class Scanner: ObservableObject {
-    @Published var findings:[Finding]=[]; @Published var storageAreas:[StorageArea]=[]; @Published var scanning=false; @Published var hasScanned=false; @Published var lastError:String?
-    private let fm=FileManager.default; private var home:String { fm.homeDirectoryForCurrentUser.path }
+    @Published var findings:[Finding]=[]
+    @Published var storageAreas:[StorageArea]=[]
+    @Published var scanning=false
+    @Published var hasScanned=false
+    @Published var lastError:String?
+    private let fm=FileManager.default
+    private var home:String { fm.homeDirectoryForCurrentUser.path }
+
     func scan() {
         scanning=true; lastError=nil; let h=home
         Task.detached(priority:.userInitiated) {
@@ -55,21 +67,65 @@ nonisolated func reviewChildren(in root: String, label: String, threshold: Int64
                 ("Creative Cloud logs","Diagnostic records from Creative Cloud.","Creative Cloud writes new logs later.","\(h)/Library/Logs/CreativeCloud"),
                 ("Codex cache","Temporary files Codex keeps locally.","Codex recreates it.","\(h)/Library/Caches/com.openai.codex"),
                 ("Homebrew cache","Installers and packages Homebrew already downloaded.","Homebrew downloads them again if required.","\(h)/Library/Caches/Homebrew"),
-                ("Yarn cache","Packages Yarn downloaded while installing dependencies.","Yarn downloads them again if required.","\(h)/Library/Caches/Yarn")]
-            var out:[Finding]=rules.compactMap { r in let s=itemSize(r.3); return s>0 ? Finding(id:r.3,name:r.0,what:r.1,consequence:r.2,path:r.3,bytes:s,kind:.nuke) : nil }
-            for profile in ["Default","Profile 1","Profile 2"] { let p="\(h)/Library/Application Support/Google/Chrome/\(profile)/Service Worker"; let s=itemSize(p); if s>0 { out.append(Finding(id:p,name:"Chrome \(profile) website data",what:"Offline copies and background website data.",consequence:"Sites can rebuild most of it, but offline site data may be lost.",path:p,bytes:s,kind:.review)) } }
+                ("Yarn cache","Packages Yarn downloaded while installing dependencies.","Yarn downloads them again if required.","\(h)/Library/Caches/Yarn")
+            ]
+            var out:[Finding]=rules.compactMap { r in
+                let s=itemSize(r.3)
+                return s>0 ? Finding(id:r.3,name:r.0,what:r.1,consequence:r.2,path:r.3,bytes:s,kind:.nuke) : nil
+            }
+
+            // Chrome Service Worker data is regenerable website cache/background data.
+            // Keep it in Nuking, while clearly disclosing that offline content may redownload.
+            for profile in ["Default","Profile 1","Profile 2"] {
+                let p="\(h)/Library/Application Support/Google/Chrome/\(profile)/Service Worker"
+                let s=itemSize(p)
+                if s>0 { out.append(Finding(id:p,name:"Chrome \(profile) website cache",what:"Cached website resources and background workers.",consequence:"Chrome and websites rebuild this as you browse. Offline website content may download again.",path:p,bytes:s,kind:.nuke)) }
+            }
+
+            // Discover large third-party caches, while deliberately avoiding Apple/media cache trees.
             let cacheRoot="\(h)/Library/Caches"
-            if let children=try? FileManager.default.contentsOfDirectory(atPath:cacheRoot) { let known=Set(out.map(\.path)); for child in children where !isProtectedAppleCache(child) { let p=cacheRoot+"/"+child; guard !known.contains(p) else { continue }; let s=itemSize(p); guard s>=250_000_000 else { continue }; let app=friendlyCacheName(child); out.append(Finding(id:p,name:"\(app) cache",what:"A large third-party cache.",consequence:"Review it first. NUKE moves it to Trash if selected.",path:p,bytes:s,kind:.review)) } }
-            let specs:[(String,String,String)]=[("Downloads","\(h)/Downloads","arrow.down.circle"),("Documents","\(h)/Documents","doc"),("Desktop","\(h)/Desktop","desktopcomputer"),("Pictures","\(h)/Pictures","photo.on.rectangle"),("Movies","\(h)/Movies","film"),("Music","\(h)/Music","music.note")]
+            if let children=try? FileManager.default.contentsOfDirectory(atPath:cacheRoot) {
+                let known=Set(out.map(\.path))
+                for child in children where !isProtectedAppleCache(child) {
+                    let p=cacheRoot+"/"+child
+                    guard !known.contains(p) else { continue }
+                    let s=itemSize(p); guard s>=250_000_000 else { continue }
+                    let app=friendlyCacheName(child)
+                    out.append(Finding(id:p,name:"\(app) cache",what:"A large third-party cache.",consequence:"Review it first. NUKE moves it to Trash if selected.",path:p,bytes:s,kind:.review))
+                }
+            }
+
+            // Scan personal storage only because the user explicitly pressed Scan Mac.
+            // macOS owns any first-use consent UI; NUKE has no separate permission wizard.
+            let specs:[(String,String,String)]=[
+                ("Downloads","\(h)/Downloads","arrow.down.circle"),
+                ("Documents","\(h)/Documents","doc"),
+                ("Desktop","\(h)/Desktop","desktopcomputer"),
+                ("Pictures","\(h)/Pictures","photo.on.rectangle"),
+                ("Movies","\(h)/Movies","film"),
+                ("Music","\(h)/Music","music.note")
+            ]
             var areas:[StorageArea]=[]
-            for spec in specs { let s=itemSize(spec.1); if s>0 { areas.append(StorageArea(id:spec.1,name:spec.0,path:spec.1,bytes:s,icon:spec.2)) }; out.append(contentsOf:reviewChildren(in:spec.1,label:spec.0)) }
+            for spec in specs {
+                let s=itemSize(spec.1)
+                if s>0 { areas.append(StorageArea(id:spec.1,name:spec.0,path:spec.1,bytes:s,icon:spec.2)) }
+                out.append(contentsOf:reviewChildren(in:spec.1,label:spec.0))
+            }
+
             out.sort{$0.bytes>$1.bytes}; areas.sort{$0.bytes>$1.bytes}
             await MainActor.run { self.findings=out; self.storageAreas=areas; self.scanning=false; self.hasScanned=true }
         }
     }
+
     func delete(_ targets:[Finding]) {
         var errors:[String]=[]
-        for t in targets { do { let u=URL(fileURLWithPath:t.path); if t.kind == .review { _=try fm.trashItem(at:u,resultingItemURL:nil) } else { try fm.removeItem(at:u) } } catch { errors.append("\(t.name): \(error.localizedDescription)") } }
+        for t in targets {
+            do {
+                let u=URL(fileURLWithPath:t.path)
+                if t.kind == .review { _=try fm.trashItem(at:u,resultingItemURL:nil) }
+                else { try fm.removeItem(at:u) }
+            } catch { errors.append("\(t.name): \(error.localizedDescription)") }
+        }
         lastError=errors.isEmpty ? nil : errors.joined(separator:"\n"); scan()
     }
     func reveal(_ path:String) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath:path)]) }

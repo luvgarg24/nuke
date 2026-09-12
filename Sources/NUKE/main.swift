@@ -49,12 +49,35 @@ nonisolated func folderSize(_ path: String) -> Int64 {
     ) else { return 0 }
     var total: Int64 = 0
     for case let url as URL in enumerator {
-        if let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
-           values.isRegularFile == true {
+        if let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]), values.isRegularFile == true {
             total += Int64(values.fileSize ?? 0)
         }
     }
     return total
+}
+
+nonisolated func isProtectedAppleCache(_ name: String) -> Bool {
+    let value = name.lowercased()
+    return value == "apple" ||
+        value.hasPrefix("com.apple") ||
+        value.hasPrefix("apple.") ||
+        value.contains("music") ||
+        value.contains("media") ||
+        value.contains("photo") ||
+        value.contains("itunes")
+}
+
+nonisolated func friendlyCacheName(_ raw: String) -> String {
+    var value = raw
+    for prefix in ["com.google.", "com.microsoft.", "com.adobe.", "com.openai.", "com."] {
+        if value.lowercased().hasPrefix(prefix) {
+            value = String(value.dropFirst(prefix.count))
+            break
+        }
+    }
+    value = value.replacingOccurrences(of: ".ShipIt", with: " updater")
+    value = value.replacingOccurrences(of: "-", with: " ")
+    return value.capitalized
 }
 
 @MainActor
@@ -73,8 +96,6 @@ final class Scanner: ObservableObject {
         let h = home
 
         Task.detached(priority: .userInitiated) {
-            // v1 is deliberately whitelist-only. Never crawl arbitrary Library,
-            // media, Downloads, Documents, Mail, Messages or other TCC locations.
             let rules: [(String, String, String, String, FindingKind)] = [
                 ("Google Chrome cache", "Temporary browser files.", "Chrome rebuilds these as you browse.", "\(h)/Library/Caches/Google", .nuke),
                 ("Chrome local model", "A model Chrome downloaded to run features on your Mac.", "Chrome may download it again if it needs it.", "\(h)/Library/Application Support/Google/Chrome/OptGuideOnDeviceModel", .nuke),
@@ -96,6 +117,30 @@ final class Scanner: ObservableObject {
                 let size = folderSize(rule.3)
                 if size > 0 {
                     output.append(Finding(id: rule.3, name: rule.0, what: rule.1, consequence: rule.2, path: rule.3, bytes: size, kind: rule.4))
+                }
+            }
+
+            // Review large third-party caches, but never recurse into Apple/media caches.
+            // This keeps Review useful without triggering macOS Music/Photos/media permissions.
+            let cacheRoot = "\(h)/Library/Caches"
+            if let children = try? FileManager.default.contentsOfDirectory(atPath: cacheRoot) {
+                let knownPaths = Set(output.map(\.path))
+                for child in children {
+                    guard !isProtectedAppleCache(child) else { continue }
+                    let path = cacheRoot + "/" + child
+                    guard !knownPaths.contains(path) else { continue }
+                    let size = folderSize(path)
+                    guard size >= 250_000_000 else { continue }
+                    let appName = friendlyCacheName(child)
+                    output.append(Finding(
+                        id: path,
+                        name: "\(appName) cache",
+                        what: "\(appName) is using a large cache on your Mac.",
+                        consequence: "Review it first. NUKE won't select it automatically.",
+                        path: path,
+                        bytes: size,
+                        kind: .review
+                    ))
                 }
             }
 

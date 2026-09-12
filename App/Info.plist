@@ -4,7 +4,7 @@
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleExecutable</key><string>NUKE</string>
-    <key>CFBundleIdentifier</key><string>in.nevermine.nuke</string>
+    <key>CFBundleIdentifier</key><string>app.nuke.mac</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>NUKE</string>
     <key>CFBundleDisplayName</key><string>NUKE</string>

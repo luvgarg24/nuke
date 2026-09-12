@@ -41,12 +41,14 @@ nonisolated func folderSize(_ path: String) -> Int64 {
     @Published var status = "Not scanned"
     @Published var hasScanned = false
     @Published var deepScanned = false
+    @Published var deepScanDenied = false
     private let fm = FileManager.default
     private var home: String { fm.homeDirectoryForCurrentUser.path }
 
     func scan(deep: Bool = false) {
         scanning = true
-        status = deep ? "Digging deeper…" : "Scanning…"
+        deepScanDenied = false
+        status = deep ? "Digging through protected folders…" : "Scanning your Mac…"
         let h = home
         Task.detached(priority: .userInitiated) {
             let rules: [(String,String,String,String,FindingKind)] = [
@@ -77,6 +79,8 @@ nonisolated func folderSize(_ path: String) -> Int64 {
                     if s >= 250_000_000 { output.append(Finding(id:path,name:friendlyName(child),what:"A large cache created by \(friendlyName(child)).",consequence:"Check it, then nuke it if you don't need the cached data.",path:path,bytes:s,kind:.review)) }
                 }
             }
+
+            var protectedReadable = false
             if deep {
                 let protected: [(String,String,String)] = [
                     ("Mail data","Mail's local database and downloaded message data.","\(h)/Library/Mail"),
@@ -84,19 +88,25 @@ nonisolated func folderSize(_ path: String) -> Int64 {
                     ("Safari data","Safari's local browser data.","\(h)/Library/Safari")
                 ]
                 for p in protected {
+                    if FileManager.default.isReadableFile(atPath: p.2), (try? FileManager.default.contentsOfDirectory(atPath: p.2)) != nil { protectedReadable = true }
                     let s = folderSize(p.2)
                     if s > 0 { output.append(Finding(id:p.2,name:p.0,what:p.1,consequence:"Personal data. NUKE will never pre-select this.",path:p.2,bytes:s,kind:.review)) }
                 }
             }
+
             output.sort { $0.bytes > $1.bytes }
-            await MainActor.run { self.findings=output; self.scanning=false; self.hasScanned=true; self.deepScanned=deep; self.status=deep ? "Deep scan complete" : "Scan complete" }
+            await MainActor.run {
+                self.findings = output
+                self.scanning = false
+                self.hasScanned = true
+                self.deepScanned = deep && protectedReadable
+                self.deepScanDenied = deep && !protectedReadable
+                self.status = self.deepScanned ? "Deep scan complete" : (self.deepScanDenied ? "Full Disk Access is still off" : "Scan complete")
+            }
         }
     }
 
-    func delete(_ targets: [Finding]) {
-        for t in targets { try? fm.removeItem(atPath: t.path) }
-        scan(deep: deepScanned)
-    }
+    func delete(_ targets: [Finding]) { for t in targets { try? fm.removeItem(atPath: t.path) }; scan(deep: deepScanned) }
     func reveal(_ f: Finding) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath:f.path)]) }
 }
 
@@ -128,7 +138,7 @@ struct ContentView: View {
             .frame(minWidth:820,minHeight:560)
             .toolbar { ToolbarItem(placement:.primaryAction) { Button(action:runScan){Label(scanner.scanning ? "Scanning…":"Scan",systemImage:"arrow.clockwise")}.disabled(scanner.scanning) } }
             .sheet(isPresented:$showingPrivacy){PrivacyView()}
-            .sheet(isPresented:$showingDeepAccess){DeepAccessView { scanner.scan(deep:true) }}
+            .sheet(isPresented:$showingDeepAccess){DeepAccessView(deepScan:{ scanner.scan(deep:true) })}
             .confirmationDialog("Nuke \(formatted(selectedBytes))?",isPresented:$confirmingDelete,titleVisibility:.visible){Button("Nuke \(formatted(selectedBytes))",role:.destructive){scanner.delete(selectedItems);selected.removeAll()};Button("Cancel",role:.cancel){}}
             .onChange(of:page){_,_ in syncSelection()}.onChange(of:scanner.findings){_,_ in syncSelection()}
     }
@@ -147,11 +157,27 @@ struct ContentView: View {
     }
 
     private var detail: some View {
-        VStack(spacing:0){
-            if !scanner.hasScanned && !scanner.scanning { welcome }
-            else if scanner.scanning && scanner.findings.isEmpty { VStack(spacing:12){ProgressView();Text(scanner.status).foregroundStyle(.secondary)}.frame(maxWidth:.infinity,maxHeight:.infinity) }
-            else { pageHeader; if activePage == .nuking && !visible.isEmpty { stats }; itemList }
-        }.background(Color(nsColor:.windowBackgroundColor))
+        ZStack {
+            VStack(spacing:0){
+                if !scanner.hasScanned && !scanner.scanning { welcome }
+                else { pageHeader; if activePage == .nuking && !visible.isEmpty { stats }; itemList }
+            }.background(Color(nsColor:.windowBackgroundColor))
+
+            if scanner.scanning { scanOverlay }
+        }
+    }
+
+    private var scanOverlay: some View {
+        ZStack {
+            Color(nsColor:.windowBackgroundColor).opacity(0.94).ignoresSafeArea()
+            VStack(spacing:18){
+                ProgressView().controlSize(.large)
+                Text(scanner.status).font(.title2).fontWeight(.semibold)
+                Text(scanner.hasScanned ? "Checking protected folders for storage the first scan couldn't see." : "Looking through caches, temporary app data and large folders.")
+                    .foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth:440)
+                ProgressView().progressViewStyle(.linear).frame(width:300)
+            }
+        }
     }
 
     private var welcome: some View { VStack(spacing:16){Image(systemName:"internaldrive").font(.system(size:42)).foregroundStyle(.secondary);Text("See what's eating your Mac.").font(.system(size:30,weight:.semibold));Text("Start with a normal scan. No extra access needed.").foregroundStyle(.secondary);Button("Scan Mac",action:runScan).buttonStyle(.borderedProminent).controlSize(.large);Label("Scans locally. Nothing is uploaded.",systemImage:"lock.fill").font(.caption).foregroundStyle(.tertiary)}.frame(maxWidth:.infinity,maxHeight:.infinity) }
@@ -162,9 +188,11 @@ struct ContentView: View {
                 if activePage == .nuking { Text("\(formatted(nukeBytes)) worth nuking.").font(.system(size:34,weight:.semibold));Text("Temporary data apps can recreate. Pre-selected for you.").foregroundStyle(.secondary) }
                 else if activePage == .review { Text("\(formatted(reviewBytes)) needs your call.").font(.system(size:34,weight:.semibold));Text("NUKE won't touch this unless you choose it.").foregroundStyle(.secondary) }
                 else { Text("\(formatted(ignoredBytes)) ignored.").font(.system(size:34,weight:.semibold));Text("NUKE leaves these alone.").foregroundStyle(.secondary) }
+                if scanner.deepScanned { Label("Deep scan complete",systemImage:"checkmark.circle.fill").font(.caption).foregroundStyle(.secondary) }
+                else if scanner.deepScanDenied { Label("Full Disk Access is still off. Enable NUKE, then try again.",systemImage:"exclamationmark.circle").font(.caption).foregroundStyle(.secondary) }
             }
             Spacer()
-            if scanner.hasScanned && !scanner.deepScanned { Button("Dig Deeper…"){showingDeepAccess=true}.controlSize(.large) }
+            if scanner.hasScanned && !scanner.deepScanned { Button(scanner.deepScanDenied ? "Try Dig Deeper Again…" : "Dig Deeper…"){showingDeepAccess=true}.controlSize(.large) }
             if activePage != .ignored && !selected.isEmpty { Button("Nuke \(formatted(selectedBytes))"){confirmingDelete=true}.buttonStyle(.borderedProminent).controlSize(.large) }
         }.padding(28)
     }
@@ -192,18 +220,41 @@ struct DeepAccessView: View {
         VStack(alignment:.leading,spacing:18){
             Image(systemName:"internaldrive.fill.badge.magnifyingglass").font(.system(size:34)).foregroundStyle(.blue)
             Text("Dig deeper?").font(.title2).fontWeight(.semibold)
-            Text("The first scan only checks what macOS lets NUKE see normally. Full Disk Access lets NUKE measure protected locations like Mail, Messages and Safari data.").foregroundStyle(.secondary)
+            Text("Full Disk Access lets NUKE check protected storage the normal scan can't see, including Mail, Messages and Safari data.").foregroundStyle(.secondary)
             Text("NUKE still scans locally. Nothing is uploaded.").font(.callout).fontWeight(.medium)
             Divider()
-            Text("macOS doesn't let apps switch this permission on themselves. Add NUKE in Full Disk Access, turn it on, then come back and run the deep scan.").font(.caption).foregroundStyle(.secondary)
+            Text("macOS won't add an app to Full Disk Access automatically. Click Add NUKE to open the picker with NUKE.app already selected, then click Open and switch NUKE on.").font(.caption).foregroundStyle(.secondary)
             HStack{
                 Button("Not Now"){dismiss()}
                 Spacer()
-                Button("Show NUKE.app"){NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])}
-                Button("Open Full Disk Access"){if let u=URL(string:"x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"){NSWorkspace.shared.open(u)}}.buttonStyle(.borderedProminent)
+                Button("Add NUKE…"){addNUKEToFullDiskAccess()}
+                Button("Open Full Disk Access"){openFullDiskAccess()}.buttonStyle(.borderedProminent)
             }
-            Button("I've enabled access — Deep Scan"){dismiss();deepScan()}.frame(maxWidth:.infinity,alignment:.trailing)
-        }.padding(28).frame(width:560)
+            Button("I've enabled NUKE — Deep Scan") { dismiss(); DispatchQueue.main.asyncAfter(deadline:.now()+0.25){ deepScan() } }
+                .frame(maxWidth:.infinity,alignment:.trailing)
+        }.padding(28).frame(width:570)
+    }
+}
+
+private func openFullDiskAccess() {
+    let modern = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles"
+    let legacy = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+    if let u = URL(string: modern), NSWorkspace.shared.open(u) { return }
+    if let u = URL(string: legacy) { NSWorkspace.shared.open(u) }
+}
+
+private func addNUKEToFullDiskAccess() {
+    let panel = NSOpenPanel()
+    panel.title = "Add NUKE to Full Disk Access"
+    panel.message = "NUKE.app is selected. Click Open, then switch NUKE on in Full Disk Access."
+    panel.prompt = "Open"
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    panel.directoryURL = Bundle.main.bundleURL.deletingLastPathComponent()
+    panel.nameFieldStringValue = Bundle.main.bundleURL.lastPathComponent
+    panel.begin { response in
+        if response == .OK { openFullDiskAccess() }
     }
 }
 

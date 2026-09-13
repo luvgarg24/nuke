@@ -12,17 +12,21 @@ cp "$PWD/.build/release/NUKE" "$APP/Contents/MacOS/NUKE"
 cp "$PWD/App/Info.plist" "$APP/Contents/Info.plist"
 cp "$PWD/assets/nuke-logo.svg" "$APP/Contents/Resources/nuke-logo.svg"
 
-# Build a real macOS icon from the SVG. qlmanage may choose its own output
-# filename, so discover the generated PNG instead of assuming one.
+# Render the SVG itself instead of a Quick Look thumbnail. qlmanage thumbnails
+# wrap SVG documents in a white preview card, which becomes part of the app icon.
 ICON_TMP="$PWD/.build/nuke-icon"
 ICONSET="$ICON_TMP/NUKE.iconset"
+RENDERED="$ICON_TMP/nuke-logo.png"
 rm -rf "$ICON_TMP"
 mkdir -p "$ICON_TMP" "$ICONSET"
-qlmanage -t -s 1024 -o "$ICON_TMP" "$PWD/assets/nuke-logo.svg" >/dev/null 2>&1 || true
-RENDERED="$(find "$ICON_TMP" -maxdepth 1 -type f -name '*.png' -print -quit)"
 
-if [ -z "$RENDERED" ] || [ ! -f "$RENDERED" ]; then
+if ! sips -s format png "$PWD/assets/nuke-logo.svg" --out "$RENDERED" >/dev/null 2>&1; then
   echo "ERROR: macOS could not render assets/nuke-logo.svg into a PNG."
+  exit 1
+fi
+
+if [ ! -s "$RENDERED" ]; then
+  echo "ERROR: rendered NUKE logo is missing."
   exit 1
 fi
 
@@ -43,7 +47,6 @@ if [ ! -s "$APP/Contents/Resources/NUKE.icns" ]; then
   exit 1
 fi
 
-# Verify the copied plist really advertises the icon before signing.
 ICON_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$APP/Contents/Info.plist" 2>/dev/null || true)"
 if [ "$ICON_NAME" != "NUKE.icns" ]; then
   echo "ERROR: built Info.plist does not contain CFBundleIconFile=NUKE.icns."
@@ -52,13 +55,12 @@ fi
 
 rm -rf "$ICON_TMP"
 touch "$APP"
-
-# Ad-hoc sign after every resource has been installed.
 codesign --force --deep --sign - "$APP"
 
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 "$LSREGISTER" -f "$APP" >/dev/null 2>&1 || true
 touch "$APP"
+killall Dock >/dev/null 2>&1 || true
 
 echo "Icon: $(ls -lh "$APP/Contents/Resources/NUKE.icns" | awk '{print $5}') NUKE.icns"
 echo

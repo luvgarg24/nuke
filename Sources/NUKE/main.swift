@@ -74,15 +74,12 @@ nonisolated func reviewChildren(in root: String, label: String, threshold: Int64
                 return s>0 ? Finding(id:r.3,name:r.0,what:r.1,consequence:r.2,path:r.3,bytes:s,kind:.nuke) : nil
             }
 
-            // Chrome Service Worker data is regenerable website cache/background data.
-            // Keep it in Nuking, while clearly disclosing that offline content may redownload.
             for profile in ["Default","Profile 1","Profile 2"] {
                 let p="\(h)/Library/Application Support/Google/Chrome/\(profile)/Service Worker"
                 let s=itemSize(p)
                 if s>0 { out.append(Finding(id:p,name:"Chrome \(profile) website cache",what:"Cached website resources and background workers.",consequence:"Chrome and websites rebuild this as you browse. Offline website content may download again.",path:p,bytes:s,kind:.nuke)) }
             }
 
-            // Discover large third-party caches, while deliberately avoiding Apple/media cache trees.
             let cacheRoot="\(h)/Library/Caches"
             if let children=try? FileManager.default.contentsOfDirectory(atPath:cacheRoot) {
                 let known=Set(out.map(\.path))
@@ -95,8 +92,6 @@ nonisolated func reviewChildren(in root: String, label: String, threshold: Int64
                 }
             }
 
-            // Scan personal storage only because the user explicitly pressed Scan Mac.
-            // macOS owns any first-use consent UI; NUKE has no separate permission wizard.
             let specs:[(String,String,String)]=[
                 ("Downloads","\(h)/Downloads","arrow.down.circle"),
                 ("Documents","\(h)/Documents","doc"),
@@ -146,15 +141,15 @@ struct ContentView: View {
             .alert("Some items couldn't be removed",isPresented:$showingError){Button("OK") {}} message:{Text(scanner.lastError ?? "Unknown error")}
             .onChange(of:page){_,_ in syncSelection()}.onChange(of:scanner.findings){_,_ in syncSelection()}.onChange(of:scanner.lastError){_,v in if v != nil { showingError=true }}
     }
-    private var sidebar:some View { VStack(alignment:.leading,spacing:0){VStack(alignment:.leading,spacing:3){Text("NUKE").font(.system(size:22,weight:.bold));Text("Free up space on your Mac.").font(.caption).foregroundStyle(.secondary)}.padding(16);List(selection:$page){side(.nuking,nukeBytes);side(.review,reviewBytes);side(.ignored,ignoredBytes)}.listStyle(.sidebar);Spacer();Button{showingPrivacy=true}label:{Label("Privacy",systemImage:"hand.raised")}.buttonStyle(.plain).padding(16)} }
+    private var sidebar:some View { VStack(alignment:.leading,spacing:0){VStack(alignment:.leading,spacing:3){Text("NUKE").font(.system(size:22,weight:.bold));Text("See what's eating your Mac.").font(.caption).foregroundStyle(.secondary)}.padding(16);List(selection:$page){side(.nuking,nukeBytes);side(.review,reviewBytes);side(.ignored,ignoredBytes)}.listStyle(.sidebar);Spacer();Button{showingPrivacy=true}label:{Label("Privacy",systemImage:"hand.raised")}.buttonStyle(.plain).padding(16)} }
     private func side(_ p:Page,_ b:Int64)->some View{Label{HStack{Text(p.rawValue);Spacer();if scanner.hasScanned{Text(formatted(b)).foregroundStyle(.secondary)}}}icon:{Image(systemName:p.icon)}.tag(p)}
     private var detail:some View { ZStack{VStack(spacing:0){if !scanner.hasScanned && !scanner.scanning{welcome}else{header;if activePage == .review && !scanner.storageAreas.isEmpty{storageStrip};if activePage == .nuking && !visible.isEmpty{stats};items}}.background(Color(nsColor:.windowBackgroundColor));if scanner.scanning{overlay}} }
-    private var welcome:some View { VStack(spacing:16){Image(systemName:"internaldrive").font(.system(size:42)).foregroundStyle(.secondary);Text("See what's eating your Mac.").font(.system(size:30,weight:.semibold));Text("Scan caches, app data and large personal files. Nothing is removed until you choose it.").foregroundStyle(.secondary);Button("Scan Mac",action:runScan).buttonStyle(.borderedProminent).controlSize(.large);Label("Scans locally. Nothing is uploaded.",systemImage:"lock.fill").font(.caption).foregroundStyle(.tertiary)}.frame(maxWidth:.infinity,maxHeight:.infinity) }
-    private var overlay:some View { ZStack{Color(nsColor:.windowBackgroundColor).opacity(0.94).ignoresSafeArea();VStack(spacing:18){ProgressView().controlSize(.large);Text("Scanning your Mac…").font(.title2).fontWeight(.semibold);Text("Measuring caches, app data and your biggest folders.").foregroundStyle(.secondary);ProgressView().progressViewStyle(.linear).frame(width:300)}} }
-    private var header:some View { HStack(spacing:24){VStack(alignment:.leading,spacing:6){switch activePage{case .nuking:Text("\(formatted(nukeBytes)) worth nuking.").font(.system(size:34,weight:.semibold));Text("Known disposable data. Pre-selected for you.").foregroundStyle(.secondary);case .review:Text("\(formatted(reviewBytes)) needs your call.").font(.system(size:34,weight:.semibold));Text("Large files and uncertain data. Nothing here is pre-selected.").foregroundStyle(.secondary);case .ignored:Text("\(formatted(ignoredBytes)) ignored.").font(.system(size:34,weight:.semibold));Text("NUKE leaves these alone.").foregroundStyle(.secondary)}};Spacer();if activePage != .ignored && !selected.isEmpty{Button(activePage == .review ? "Trash \(formatted(selectedBytes))":"Nuke \(formatted(selectedBytes))"){confirmingDelete=true}.buttonStyle(.borderedProminent).controlSize(.large)}}.padding(28) }
+    private var welcome:some View { VStack(spacing:16){Image(systemName:"internaldrive").font(.system(size:42)).foregroundStyle(.secondary);Text("See what's eating your Mac.").font(.system(size:30,weight:.semibold));Text("NUKE shows you what is using your storage, explains why it is there, and lets you remove what you don't need.").multilineTextAlignment(.center).foregroundStyle(.secondary).frame(maxWidth:520);Button("Scan Mac",action:runScan).buttonStyle(.borderedProminent).controlSize(.large);Label("Scans locally. Nothing is uploaded.",systemImage:"lock.fill").font(.caption).foregroundStyle(.tertiary)}.frame(maxWidth:.infinity,maxHeight:.infinity) }
+    private var overlay:some View { ZStack{Color(nsColor:.windowBackgroundColor).opacity(0.94).ignoresSafeArea();VStack(spacing:18){ProgressView().controlSize(.large);Text("Scanning your Mac…").font(.title2).fontWeight(.semibold);Text("Finding what's using your storage.").foregroundStyle(.secondary);ProgressView().progressViewStyle(.linear).frame(width:300)}} }
+    private var header:some View { HStack(spacing:24){VStack(alignment:.leading,spacing:6){switch activePage{case .nuking:Text("\(formatted(nukeBytes)) worth nuking.").font(.system(size:34,weight:.semibold));Text("Regenerable data. NUKE explains every item before you remove it.").foregroundStyle(.secondary);case .review:Text("\(formatted(reviewBytes)) needs your call.").font(.system(size:34,weight:.semibold));Text("Your large files and uncertain app data. Nothing here is pre-selected.").foregroundStyle(.secondary);case .ignored:Text("\(formatted(ignoredBytes)) ignored.").font(.system(size:34,weight:.semibold));Text("NUKE remembers to leave these alone.").foregroundStyle(.secondary)}};Spacer();if activePage != .ignored && !selected.isEmpty{Button(activePage == .review ? "Trash \(formatted(selectedBytes))":"Nuke \(formatted(selectedBytes))"){confirmingDelete=true}.buttonStyle(.borderedProminent).controlSize(.large)}}.padding(28) }
     private var storageStrip:some View { ScrollView(.horizontal,showsIndicators:false){HStack(spacing:10){ForEach(scanner.storageAreas){a in Button{scanner.reveal(a.path)}label:{HStack(spacing:10){Image(systemName:a.icon).font(.title3);VStack(alignment:.leading,spacing:2){Text(a.name).fontWeight(.medium);Text(formatted(a.bytes)).font(.caption).foregroundStyle(.secondary)}}.padding(.horizontal,13).padding(.vertical,10).background(Color(nsColor:.controlBackgroundColor)).clipShape(RoundedRectangle(cornerRadius:9))}.buttonStyle(.plain).help("Show \(a.name) in Finder")}}.padding(.horizontal,28).padding(.bottom,14)} }
-    private var stats:some View { HStack(spacing:0){Stat(icon:"checkmark.square",value:"\(selected.count)",label:"selected");Divider().frame(height:42);Stat(icon:"internaldrive",value:formatted(selectedBytes),label:"will be freed");Divider().frame(height:42);Stat(icon:"arrow.clockwise",value:"Recreatable",label:"apps can rebuild it")}.padding(.vertical,14).background(Color(nsColor:.controlBackgroundColor).opacity(0.35)) }
-    @ViewBuilder private var items:some View { if visible.isEmpty{ContentUnavailableView(activePage == .ignored ? "Nothing ignored":"Nothing here",systemImage:"checkmark.circle").frame(maxWidth:.infinity,maxHeight:.infinity)}else{List{if activePage != .ignored{HStack{Button(action:toggleAll){Image(systemName:allVisibleSelected ? "checkmark.square.fill":"square")}.buttonStyle(.borderless);Text(activePage == .nuking ? "Auto-select all":"Select all");Spacer();Text("\(visible.count) items").foregroundStyle(.secondary)}.font(.caption).padding(.vertical,4)};ForEach(visible){f in FindingRow(finding:f,selected:selected.contains(f.path),selectable:activePage != .ignored){toggle(f)}.contextMenu{Button("Show in Finder"){scanner.reveal(f.path)};Divider();Button(activePage == .ignored ? "Stop Ignoring":"Ignore"){toggleIgnored(f.path)}}}}.listStyle(.inset)} }
+    private var stats:some View { HStack(spacing:0){Stat(icon:"checkmark.square",value:"\(selected.count)",label:"selected");Divider().frame(height:42);Stat(icon:"internaldrive",value:formatted(selectedBytes),label:"will be freed");Divider().frame(height:42);Stat(icon:"questionmark.circle",value:"Explained",label:"click any item")}.padding(.vertical,14).background(Color(nsColor:.controlBackgroundColor).opacity(0.35)) }
+    @ViewBuilder private var items:some View { if visible.isEmpty{ContentUnavailableView(activePage == .ignored ? "Nothing ignored":"Nothing here",systemImage:"checkmark.circle").frame(maxWidth:.infinity,maxHeight:.infinity)}else{List{if activePage != .ignored{HStack{Button(action:toggleAll){Image(systemName:allVisibleSelected ? "checkmark.square.fill":"square")}.buttonStyle(.borderless);Text(activePage == .nuking ? "Auto-select all":"Select all");Spacer();Text("\(visible.count) items").foregroundStyle(.secondary)}.font(.caption).padding(.vertical,4)};ForEach(visible){f in FindingRow(finding:f,selected:selected.contains(f.path),selectable:activePage != .ignored,toggle:{toggle(f)},reveal:{scanner.reveal(f.path)}).contextMenu{Button("Show in Finder"){scanner.reveal(f.path)};Divider();Button(activePage == .ignored ? "Stop Ignoring":"Ignore"){toggleIgnored(f.path)}}}}.listStyle(.inset)} }
     private func runScan(){selected.removeAll();scanner.scan()}
     private func toggle(_ f:Finding){if selected.contains(f.path){selected.remove(f.path)}else{selected.insert(f.path)};if f.kind == .nuke{var s=excluded;if selected.contains(f.path){s.remove(f.path)}else{s.insert(f.path)};excludedStore=s.sorted().joined(separator:"\n")}}
     private func toggleAll(){let wasAll=allVisibleSelected;if wasAll{visible.forEach{selected.remove($0.path)}}else{visible.forEach{selected.insert($0.path)}};if activePage == .nuking{var s=excluded;if wasAll{visible.forEach{s.insert($0.path)}}else{visible.forEach{s.remove($0.path)}};excludedStore=s.sorted().joined(separator:"\n")}}
@@ -162,7 +157,56 @@ struct ContentView: View {
     private func syncSelection(){if activePage == .nuking{selected=Set(nukeItems.filter{!excluded.contains($0.path)}.map(\.path))}else{selected.removeAll()}}
 }
 
-struct FindingRow:View { let finding:Finding;let selected:Bool;let selectable:Bool;let toggle:()->Void;var body:some View{HStack(spacing:12){if selectable{Button(action:toggle){Image(systemName:selected ? "checkmark.square.fill":"square")}.buttonStyle(.borderless).frame(width:26)}else{Color.clear.frame(width:26,height:1)};VStack(alignment:.leading,spacing:3){Text(finding.name).fontWeight(.medium);Text(finding.what).font(.caption).foregroundStyle(.secondary);Text(finding.consequence).font(.caption).foregroundStyle(.tertiary);Text(shortPath(finding.path)).font(.caption2.monospaced()).foregroundStyle(.tertiary).lineLimit(1)}.frame(maxWidth:.infinity,alignment:.leading);Text(formatted(finding.bytes)).font(.system(.body,design:.monospaced,weight:.semibold)).monospacedDigit().frame(width:112,alignment:.trailing);Image(systemName:"ellipsis.circle").foregroundStyle(.secondary).frame(width:30)}} }
+struct FindingRow: View {
+    let finding: Finding
+    let selected: Bool
+    let selectable: Bool
+    let toggle: () -> Void
+    let reveal: () -> Void
+    @State private var showingExplanation = false
+
+    var body: some View {
+        HStack(spacing:12) {
+            if selectable {
+                Button(action:toggle){Image(systemName:selected ? "checkmark.square.fill":"square")}.buttonStyle(.borderless).frame(width:26)
+            } else { Color.clear.frame(width:26,height:1) }
+            VStack(alignment:.leading,spacing:3) {
+                Text(finding.name).fontWeight(.medium)
+                Text(finding.what).font(.caption).foregroundStyle(.secondary)
+                Text(finding.consequence).font(.caption).foregroundStyle(.tertiary)
+                Text(shortPath(finding.path)).font(.caption2.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
+            }.frame(maxWidth:.infinity,alignment:.leading)
+            Text(formatted(finding.bytes)).font(.system(.body,design:.monospaced,weight:.semibold)).monospacedDigit().frame(width:112,alignment:.trailing)
+            Button { showingExplanation = true } label: { Image(systemName:"questionmark.circle").foregroundStyle(.secondary).frame(width:30) }.buttonStyle(.borderless).help("Why is this here?")
+        }
+        .sheet(isPresented:$showingExplanation) { FindingExplanationView(finding:finding,reveal:reveal) }
+    }
+}
+
+struct FindingExplanationView: View {
+    let finding: Finding
+    let reveal: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        VStack(alignment:.leading,spacing:20) {
+            HStack(alignment:.top) {
+                VStack(alignment:.leading,spacing:5) {
+                    Text(finding.name).font(.title2).fontWeight(.semibold)
+                    Text(formatted(finding.bytes)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(finding.kind == .nuke ? "NUKE" : "REVIEW").font(.caption).fontWeight(.semibold).padding(.horizontal,9).padding(.vertical,5).background(Color(nsColor:.controlBackgroundColor)).clipShape(Capsule())
+            }
+            Divider()
+            VStack(alignment:.leading,spacing:7) { Text("What is this?").fontWeight(.semibold); Text(finding.what).foregroundStyle(.secondary) }
+            VStack(alignment:.leading,spacing:7) { Text(finding.kind == .nuke ? "What happens if I nuke it?" : "What happens if I remove it?").fontWeight(.semibold); Text(finding.consequence).foregroundStyle(.secondary) }
+            VStack(alignment:.leading,spacing:7) { Text("Where is it?").fontWeight(.semibold); Text(shortPath(finding.path)).font(.callout.monospaced()).textSelection(.enabled).foregroundStyle(.secondary) }
+            Spacer()
+            HStack { Button("Show in Finder",action:reveal); Spacer(); Button("Done"){dismiss()}.keyboardShortcut(.defaultAction) }
+        }.padding(28).frame(width:520,height:360)
+    }
+}
+
 struct Stat:View { let icon,value,label:String;var body:some View{HStack(spacing:10){Image(systemName:icon).foregroundStyle(.secondary);VStack(alignment:.leading){Text(value).fontWeight(.semibold);Text(label).font(.caption).foregroundStyle(.secondary)}}.frame(maxWidth:.infinity)} }
 struct PrivacyView:View { @Environment(\.dismiss) private var dismiss;var body:some View{VStack(alignment:.leading,spacing:18){Image(systemName:"hand.raised.fill").font(.system(size:30));Text("Your files stay yours.").font(.title2).fontWeight(.semibold);Text("NUKE scans locally. It doesn't upload your files or require an account.").foregroundStyle(.secondary);Button("Done"){dismiss()}.frame(maxWidth:.infinity,alignment:.trailing)}.padding(28).frame(width:440)} }
 private func shortPath(_ p:String)->String{p.replacingOccurrences(of:FileManager.default.homeDirectoryForCurrentUser.path,with:"~")}

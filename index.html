@@ -8,82 +8,26 @@
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests">
   <title>NUKE — Find what's eating your Mac.</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/nuke-logo.svg">
+  <link rel="apple-touch-icon" href="/assets/nuke-logo.svg">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header class="nav wrap">
-    <a class="brand" href="#top" aria-label="NUKE home">NUKE</a>
-    <nav aria-label="Main navigation">
-      <a href="#how">How it works</a>
-      <a href="#privacy">Privacy</a>
-      <a href="https://github.com/luvgarg24/nuke" rel="noopener noreferrer">GitHub ↗</a>
-    </nav>
+    <a class="brand" href="#top" aria-label="NUKE home"><img src="/assets/nuke-logo.svg" alt=""><span>NUKE</span></a>
+    <nav aria-label="Main navigation"><a href="#how">How it works</a><a href="#privacy">Privacy</a><a href="https://github.com/luvgarg24/nuke" rel="noopener noreferrer">GitHub ↗</a></nav>
   </header>
-
   <main id="top">
-    <section class="hero wrap">
-      <p class="kicker">macOS only · alpha</p>
-      <h1>Find what's<br>eating your Mac.</h1>
-      <p class="lede">NUKE finds caches, local models and app leftovers taking up space, tells you what they are, then lets you decide what dies.</p>
-      <div class="actions">
-        <a class="button primary" href="https://github.com/luvgarg24/nuke" rel="noopener noreferrer">Get NUKE <span>→</span></a>
-        <a class="button secondary" href="#run">Run the alpha</a>
-      </div>
-      <div class="trust" aria-label="Privacy highlights"><span>100% local</span><span>No uploads</span><span>No account</span></div>
-    </section>
-
-    <section class="product wrap" aria-label="NUKE app preview">
-      <div class="window">
-        <div class="titlebar"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div><strong>NUKE</strong><span>↻</span></div>
-        <div class="app">
-          <aside>
-            <b>NUKE</b>
-            <small>Free up space on your Mac.</small>
-            <div class="side active"><span>Nuking</span><em>6.55 GB</em></div>
-            <div class="side"><span>Review</span><em>1.52 GB</em></div>
-            <div class="side"><span>Ignored</span><em>0 KB</em></div>
-          </aside>
-          <div class="results">
-            <div class="resulthead"><div><h2>6.55 GB worth nuking.</h2><p>Temporary data apps can recreate. Pre-selected for you.</p></div><button>Nuke 6.55 GB</button></div>
-            <div class="summary"><span><b>9</b><small>selected</small></span><span><b>6.55 GB</b><small>will be freed</small></span><span><b>Recreatable</b><small>apps can rebuild it</small></span></div>
-            <div class="listhead"><span>☑ &nbsp; Auto-select all</span><em>9 items</em></div>
-            <div class="item"><span class="tick">✓</span><div><b>Google Chrome cache</b><p>Temporary browser files.</p><small>Chrome rebuilds these as you browse.</small></div><strong>2.59 GB</strong><i>•••</i></div>
-            <div class="item"><span class="tick">✓</span><div><b>Codex cache</b><p>Temporary files Codex keeps locally.</p><small>Codex recreates it.</small></div><strong>1.45 GB</strong><i>•••</i></div>
-            <div class="item"><span class="tick">✓</span><div><b>Chrome Profile 2 website data</b><p>Offline copies and background website data.</p><small>Sites rebuild it when needed.</small></div><strong>889.4 MB</strong><i>•••</i></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="how" class="split wrap">
-      <div><p class="kicker">Why NUKE</p><h2>“System Data” isn't an answer.</h2></div>
-      <p>macOS tells you storage is full, but not what is actually disposable. NUKE turns filesystem paths into plain decisions: what it is, how much space it uses, and what happens if you remove it.</p>
-    </section>
-
-    <section class="steps wrap">
-      <article><span>01</span><h3>Scan.</h3><p>One click scans known cache and app-data locations. No Full Disk Access wall.</p></article>
-      <article><span>02</span><h3>Understand.</h3><p>See the size, exact source and consequence before anything is removed.</p></article>
-      <article><span>03</span><h3>Nuke.</h3><p>Known disposable data is pre-selected. Uncertain large caches stay in Review for your call.</p></article>
-    </section>
-
-    <section id="privacy" class="privacy wrap">
-      <p class="kicker">Privacy</p>
-      <h2>Your files stay yours.</h2>
-      <p>NUKE scans on your Mac. There is no cloud scanner, account, analytics SDK or telemetry. The current alpha does not ask for Full Disk Access.</p>
-      <div class="privacyfacts"><span><b>0</b> bytes uploaded</span><span><b>0</b> accounts</span><span><b>100%</b> local</span></div>
-    </section>
-
-    <section id="run" class="run wrap">
-      <p class="kicker">Alpha</p>
-      <h2>Run it now.</h2>
-      <div class="terminal"><div><span></span><span></span><span></span><small>Terminal</small></div><pre><code>git clone https://github.com/luvgarg24/nuke.git
+    <section class="hero wrap"><p class="kicker">macOS only · alpha</p><h1>Find what's<br>eating your Mac.</h1><p class="lede">NUKE finds caches, local models and app leftovers taking up space, tells you what they are, then lets you decide what dies.</p><div class="actions"><a class="button primary" href="https://github.com/luvgarg24/nuke" rel="noopener noreferrer">Get NUKE <span>→</span></a><a class="button secondary" href="#run">Run the alpha</a></div><div class="trust" aria-label="Privacy highlights"><span>100% local</span><span>No uploads</span><span>No account</span></div></section>
+    <section class="product wrap" aria-label="NUKE app preview"><div class="window"><div class="titlebar"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div><strong>NUKE</strong><span>↻</span></div><div class="app"><aside><div class="appbrand"><img src="/assets/nuke-logo.svg" alt=""><div><b>NUKE</b><small>See what's eating your Mac.</small></div></div><div class="side active"><span>Nuking</span><em>6.55 GB</em></div><div class="side"><span>Review</span><em>1.52 GB</em></div><div class="side"><span>Ignored</span><em>0 KB</em></div></aside><div class="results"><div class="resulthead"><div><h2>6.55 GB worth nuking.</h2><p>Regenerable data. NUKE explains every item before you remove it.</p></div><button>Nuke 6.55 GB</button></div><div class="listhead"><span>☑ &nbsp; Select all</span><em>5 apps</em></div><div class="item"><span class="tick">✓</span><div><b>Google Chrome</b><p>Browser cache, website cache and local model data.</p></div><strong>4.12 GB</strong><i>Explain</i></div><div class="item"><span class="tick">✓</span><div><b>Codex</b><p>Temporary working data.</p></div><strong>1.45 GB</strong><i>Explain</i></div><div class="item"><span class="tick">✓</span><div><b>Yarn</b><p>Downloaded packages.</p></div><strong>618 MB</strong><i>Explain</i></div></div></div></div></section>
+    <section id="how" class="split wrap"><div><p class="kicker">Why NUKE</p><h2>“System Data” isn't an answer.</h2></div><p>macOS tells you storage is full, but not what is actually disposable. NUKE turns filesystem paths into plain decisions: what it is, how much space it uses, and what happens if you remove it.</p></section>
+    <section class="steps wrap"><article><span>01</span><h3>Scan.</h3><p>One click scans known cache and app-data locations.</p></article><article><span>02</span><h3>Understand.</h3><p>NUKE tells you the real story behind what's using your storage.</p></article><article><span>03</span><h3>Nuke.</h3><p>Regenerable data is ready to nuke. Anything uncertain stays your call.</p></article></section>
+    <section id="privacy" class="privacy wrap"><p class="kicker">Privacy</p><h2>Your files stay yours.</h2><p>NUKE scans on your Mac. There is no cloud scanner, account, analytics SDK or telemetry.</p><div class="privacyfacts"><span><b>0</b> bytes uploaded</span><span><b>0</b> accounts</span><span><b>100%</b> local</span></div></section>
+    <section id="run" class="run wrap"><p class="kicker">Alpha</p><h2>Run it now.</h2><div class="terminal"><div><span></span><span></span><span></span><small>Terminal</small></div><pre><code>git clone https://github.com/luvgarg24/nuke.git
 cd nuke
 chmod +x scripts/build-app.sh
-./scripts/build-app.sh</code></pre></div>
-      <p>Requires macOS 14+ and Swift/Xcode command line tools.</p>
-    </section>
+./scripts/build-app.sh</code></pre></div><p>Requires macOS 14+ and Swift/Xcode command line tools.</p></section>
   </main>
-
-  <footer class="footer wrap"><b>NUKE</b><span>Find what's eating your Mac. Kill what you don't need.</span><a href="https://github.com/luvgarg24/nuke" rel="noopener noreferrer">GitHub ↗</a></footer>
+  <footer class="footer wrap"><div class="footerbrand"><img src="/assets/nuke-logo.svg" alt=""><b>NUKE</b></div><span>Find what's eating your Mac. Kill what you don't need.</span><a href="https://github.com/luvgarg24/nuke" rel="noopener noreferrer">GitHub ↗</a></footer>
 </body>
 </html>

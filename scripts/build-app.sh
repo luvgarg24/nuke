@@ -31,13 +31,21 @@ if [ -f "$RENDERED" ]; then
   sips -z 512 512 "$RENDERED" --out "$ICONSET/icon_512x512.png" >/dev/null
   cp "$RENDERED" "$ICONSET/icon_512x512@2x.png"
   iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/NUKE.icns"
+  touch "$APP"
 else
-  echo "Warning: couldn't render NUKE icon; app will use the default icon."
+  echo "ERROR: couldn't render NUKE icon."
+  exit 1
 fi
 rm -rf "$ICON_TMP"
 
-# Ad-hoc sign for local development so macOS sees a stable app bundle.
+# Ad-hoc sign after every resource has been installed.
 codesign --force --deep --sign - "$APP"
+
+# Register this exact bundle with Launch Services before opening it. This avoids
+# macOS keeping the generic executable icon for a freshly-built local app.
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+"$LSREGISTER" -f "$APP" >/dev/null 2>&1 || true
+touch "$APP"
 
 echo
 echo "Built: $APP"

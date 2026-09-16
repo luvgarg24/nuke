@@ -1,109 +1,269 @@
 import SwiftUI
 
+private let nukeYellow = Color(red: 1.0, green: 0.78, blue: 0.05)
+private let nukeAmber = Color(red: 1.0, green: 0.47, blue: 0.06)
+
+private func clamp01(_ value: Double) -> Double {
+    min(max(value, 0), 1)
+}
+
+private func segment(_ value: Double, from start: Double, to end: Double) -> Double {
+    guard end > start else { return value >= end ? 1 : 0 }
+    return clamp01((value - start) / (end - start))
+}
+
+private func easeOutCubic(_ value: Double) -> Double {
+    let t = clamp01(value)
+    return 1 - pow(1 - t, 3)
+}
+
+private func easeInOutCubic(_ value: Double) -> Double {
+    let t = clamp01(value)
+    return t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2
+}
+
 struct NukeButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .black, design: .rounded))
-            .foregroundStyle(Color.black)
-            .padding(.horizontal, 18)
-            .frame(height: 40)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(red: 1.0, green: 0.82, blue: 0.0))
-                    .overlay(alignment: .top) {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(.white.opacity(configuration.isPressed ? 0.08 : 0.30), lineWidth: 1)
-                    }
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(.black.opacity(0.45), lineWidth: 1)
+            .font(.system(size: 13, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 15)
+            .frame(height: 38)
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.black.opacity(0.72))
+                        .offset(y: configuration.isPressed ? 1 : 3)
+
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(nsColor: .darkGray).opacity(0.92),
+                                    Color.black.opacity(0.96)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .overlay(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                                .fill(nukeYellow)
+                                .frame(width: 3, height: 20)
+                                .padding(.leading, 7)
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(.white.opacity(configuration.isPressed ? 0.08 : 0.16), lineWidth: 1)
+                        }
+                }
             }
-            .shadow(color: .black.opacity(configuration.isPressed ? 0.10 : 0.34), radius: configuration.isPressed ? 1 : 2, x: 0, y: configuration.isPressed ? 1 : 4)
-            .offset(y: configuration.isPressed ? 3 : 0)
+            .shadow(
+                color: .black.opacity(configuration.isPressed ? 0.14 : 0.28),
+                radius: configuration.isPressed ? 2 : 5,
+                x: 0,
+                y: configuration.isPressed ? 1 : 3
+            )
+            .offset(y: configuration.isPressed ? 2 : 0)
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
-            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.075), value: configuration.isPressed)
     }
 }
 
 struct NukeDetonationOverlay: View {
     let bytes: Int64
     let finished: () -> Void
-    @State private var phase = 0
+
+    private let duration = 1.72
+    @State private var startedAt: Date?
     @State private var didFinish = false
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Color.black.opacity(phase >= 1 ? 0.74 : 0)
-                    .ignoresSafeArea()
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+            GeometryReader { geo in
+                let progress = animationProgress(at: timeline.date)
+                let shortestSide = max(1, min(geo.size.width, geo.size.height))
+                let textIn = easeOutCubic(segment(progress, from: 0.66, to: 0.84))
+                let dimIn = easeOutCubic(segment(progress, from: 0.00, to: 0.10))
+                let dimOut = easeInOutCubic(segment(progress, from: 0.80, to: 1.00))
 
-                if phase >= 1 {
-                    Circle()
-                        .stroke(Color(red: 1.0, green: 0.82, blue: 0.0).opacity(phase >= 4 ? 0 : 0.85), lineWidth: phase >= 3 ? 3 : 10)
-                        .frame(width: phase >= 3 ? geo.size.width * 1.25 : 40, height: phase >= 3 ? geo.size.width * 1.25 : 40)
-                        .blur(radius: phase >= 3 ? 2 : 0)
-                }
+                ZStack {
+                    Color.black
+                        .opacity((0.58 * dimIn) * (1 - 0.68 * dimOut))
 
-                VStack(spacing: 0) {
-                    Spacer()
-                    ZStack(alignment: .bottom) {
-                        if phase >= 2 {
-                            Circle()
-                                .fill(Color.white.opacity(phase == 2 ? 0.98 : 0))
-                                .frame(width: phase == 2 ? 260 : 520, height: phase == 2 ? 260 : 520)
-                                .blur(radius: phase == 2 ? 12 : 30)
+                    DetonationCanvas(progress: progress)
+                        .frame(width: shortestSide * 0.82, height: shortestSide * 0.82)
+                        .position(x: geo.size.width / 2, y: geo.size.height * 0.45)
 
-                            VStack(spacing: -22) {
-                                ZStack {
-                                    Circle().fill(Color(red: 1.0, green: 0.82, blue: 0.0)).frame(width: phase >= 3 ? 190 : 70, height: phase >= 3 ? 105 : 70)
-                                    Circle().fill(Color.white.opacity(0.72)).frame(width: phase >= 3 ? 110 : 40, height: phase >= 3 ? 62 : 40).blur(radius: 8)
-                                }
-                                RoundedRectangle(cornerRadius: 30)
-                                    .fill(LinearGradient(colors: [Color(red: 1.0, green: 0.82, blue: 0.0), .orange.opacity(0.75)], startPoint: .top, endPoint: .bottom))
-                                    .frame(width: phase >= 3 ? 54 : 24, height: phase >= 3 ? 118 : 34)
-                            }
-                            .transition(.scale(scale: 0.25).combined(with: .opacity))
-                        } else {
-                            Image(systemName: "capsule.portrait.fill")
-                                .font(.system(size: 38, weight: .black))
-                                .foregroundStyle(Color(red: 1.0, green: 0.82, blue: 0.0))
-                                .rotationEffect(.degrees(180))
-                                .offset(y: phase == 0 ? -geo.size.height * 0.45 : 0)
-                                .shadow(color: .yellow.opacity(0.35), radius: 8)
-                        }
+                    VStack(spacing: 5) {
+                        Spacer()
+
+                        Text("\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) nuked.")
+                            .font(.system(size: 27, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+
+                        Text("Space reclaimed.")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(height: 230)
-
-                    if phase >= 4 {
-                        VStack(spacing: 6) {
-                            Text("\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) nuked.")
-                                .font(.system(size: 30, weight: .black, design: .rounded))
-                                .monospacedDigit()
-                            Text("Your Mac can breathe again.")
-                                .foregroundStyle(.secondary)
-                        }
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                    Spacer()
+                    .padding(.bottom, max(34, geo.size.height * 0.10))
+                    .opacity(textIn * (1 - 0.45 * dimOut))
+                    .offset(y: 8 * (1 - textIn))
                 }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
             }
-            .animation(.spring(response: 0.34, dampingFraction: 0.72), value: phase)
         }
+        .background(Color.clear)
+        .ignoresSafeArea()
         .allowsHitTesting(true)
-        .onAppear { detonate() }
+        .onAppear {
+            startedAt = Date()
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+                guard !didFinish else { return }
+                didFinish = true
+                finished()
+            }
+        }
     }
 
-    private func detonate() {
-        phase = 0
-        withAnimation(.easeIn(duration: 0.42)) { phase = 1 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.44) { withAnimation(.easeOut(duration: 0.10)) { phase = 2 } }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.56) { withAnimation(.spring(response: 0.46, dampingFraction: 0.64)) { phase = 3 } }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.18) { withAnimation(.easeOut(duration: 0.30)) { phase = 4 } }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.05) {
-            guard !didFinish else { return }
-            didFinish = true
-            finished()
+    private func animationProgress(at date: Date) -> Double {
+        guard let startedAt else { return 0 }
+        return clamp01(date.timeIntervalSince(startedAt) / duration)
+    }
+}
+
+private struct DetonationCanvas: View {
+    let progress: Double
+
+    var body: some View {
+        Canvas(rendersAsynchronously: true) { context, size in
+            let side = min(size.width, size.height)
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+
+            drawFlash(in: &context, center: center, side: side)
+            drawShockwave(in: &context, center: center, side: side)
+            drawParticles(in: &context, center: center, side: side)
+            drawCloud(in: &context, center: center, side: side)
         }
+        .compositingGroup()
+    }
+
+    private func drawFlash(in context: inout GraphicsContext, center: CGPoint, side: CGFloat) {
+        let appear = easeOutCubic(segment(progress, from: 0.10, to: 0.20))
+        let disappear = easeOutCubic(segment(progress, from: 0.22, to: 0.43))
+        let visibility = appear * (1 - disappear)
+        guard visibility > 0.001 else { return }
+
+        let radius = side * CGFloat(0.055 + 0.22 * easeOutCubic(segment(progress, from: 0.10, to: 0.34)))
+        let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+        let path = Path(ellipseIn: rect)
+
+        context.fill(
+            path,
+            with: .radialGradient(
+                Gradient(colors: [
+                    Color.white.opacity(0.98 * visibility),
+                    nukeYellow.opacity(0.92 * visibility),
+                    nukeAmber.opacity(0.34 * visibility),
+                    Color.clear
+                ]),
+                center: center,
+                startRadius: 0,
+                endRadius: radius
+            )
+        )
+    }
+
+    private func drawShockwave(in context: inout GraphicsContext, center: CGPoint, side: CGFloat) {
+        let wave = easeOutCubic(segment(progress, from: 0.17, to: 0.58))
+        let fade = easeOutCubic(segment(progress, from: 0.38, to: 0.68))
+        let opacity = (1 - fade) * 0.82
+        guard opacity > 0.001 else { return }
+
+        let radius = side * CGFloat(0.035 + 0.39 * wave)
+        let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+        let path = Path(ellipseIn: rect)
+        context.stroke(path, with: .color(nukeYellow.opacity(opacity)), lineWidth: max(1, 5 - 3.5 * wave))
+    }
+
+    private func drawParticles(in context: inout GraphicsContext, center: CGPoint, side: CGFloat) {
+        let travel = easeOutCubic(segment(progress, from: 0.17, to: 0.63))
+        let fade = easeOutCubic(segment(progress, from: 0.42, to: 0.72))
+        let opacity = 1 - fade
+        guard opacity > 0.001 else { return }
+
+        for index in 0..<22 {
+            let seed = Double(index)
+            let angle = (seed / 22.0) * Double.pi * 2 + sin(seed * 1.91) * 0.15
+            let maxDistance = side * CGFloat(0.16 + (sin(seed * 2.37) + 1) * 0.055)
+            let distance = maxDistance * CGFloat(travel)
+            let x = center.x + cos(angle) * distance
+            let y = center.y + sin(angle) * distance
+            let diameter = CGFloat(1.7 + (index % 4)) * CGFloat(1 - 0.42 * travel)
+            let rect = CGRect(x: x - diameter / 2, y: y - diameter / 2, width: diameter, height: diameter)
+            context.fill(Path(ellipseIn: rect), with: .color((index % 3 == 0 ? Color.white : nukeYellow).opacity(opacity * 0.86)))
+        }
+    }
+
+    private func drawCloud(in context: inout GraphicsContext, center: CGPoint, side: CGFloat) {
+        let grow = easeOutCubic(segment(progress, from: 0.23, to: 0.53))
+        let fade = easeOutCubic(segment(progress, from: 0.64, to: 0.90))
+        let opacity = (1 - fade) * 0.96
+        guard opacity > 0.001 else { return }
+
+        let lift = side * CGFloat(0.045 * grow)
+        let cloudCenter = CGPoint(x: center.x, y: center.y - lift)
+
+        let stemWidth = side * CGFloat(0.042 + 0.010 * grow)
+        let stemHeight = side * CGFloat(0.03 + 0.16 * grow)
+        let stemRect = CGRect(
+            x: cloudCenter.x - stemWidth / 2,
+            y: cloudCenter.y,
+            width: stemWidth,
+            height: stemHeight
+        )
+        context.fill(
+            Path(roundedRect: stemRect, cornerRadius: stemWidth / 2),
+            with: .linearGradient(
+                Gradient(colors: [
+                    nukeYellow.opacity(opacity),
+                    nukeAmber.opacity(opacity * 0.74)
+                ]),
+                startPoint: CGPoint(x: stemRect.midX, y: stemRect.minY),
+                endPoint: CGPoint(x: stemRect.midX, y: stemRect.maxY)
+            )
+        )
+
+        let capWidth = side * CGFloat(0.08 + 0.28 * grow)
+        let capHeight = side * CGFloat(0.055 + 0.10 * grow)
+        let capY = cloudCenter.y - capHeight * 0.54
+
+        let lobes: [(CGFloat, CGFloat, CGFloat)] = [
+            (-0.30, 0.10, 0.46),
+            (-0.13, -0.04, 0.58),
+            (0.08, -0.08, 0.64),
+            (0.29, 0.08, 0.48),
+            (0.00, 0.14, 0.72)
+        ]
+
+        for (xFactor, yFactor, scale) in lobes {
+            let width = capWidth * scale
+            let height = capHeight * (0.72 + scale * 0.34)
+            let x = cloudCenter.x + capWidth * xFactor
+            let y = capY + capHeight * yFactor
+            let rect = CGRect(x: x - width / 2, y: y - height / 2, width: width, height: height)
+            context.fill(Path(ellipseIn: rect), with: .color(nukeYellow.opacity(opacity)))
+        }
+
+        let coreWidth = capWidth * 0.48
+        let coreHeight = capHeight * 0.54
+        let coreRect = CGRect(
+            x: cloudCenter.x - coreWidth / 2,
+            y: capY - coreHeight / 2,
+            width: coreWidth,
+            height: coreHeight
+        )
+        context.fill(Path(ellipseIn: coreRect), with: .color(Color.white.opacity(opacity * 0.56)))
     }
 }

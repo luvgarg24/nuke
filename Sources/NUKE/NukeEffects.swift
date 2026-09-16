@@ -108,7 +108,7 @@ struct NukeDetonationOverlay: View {
                     }
                     .padding(.bottom, max(34, geo.size.height * 0.10))
                     .opacity(textIn * (1 - 0.45 * dimOut))
-                    .offset(y: 8 * (1 - textIn))
+                    .offset(y: CGFloat(8 * (1 - textIn)))
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
                 .clipped()
@@ -184,7 +184,7 @@ private struct DetonationCanvas: View {
         let radius = side * CGFloat(0.035 + 0.39 * wave)
         let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
         let path = Path(ellipseIn: rect)
-        context.stroke(path, with: .color(nukeYellow.opacity(opacity)), lineWidth: max(1, 5 - 3.5 * wave))
+        context.stroke(path, with: .color(nukeYellow.opacity(opacity)), lineWidth: CGFloat(max(1, 5 - 3.5 * wave)))
     }
 
     private func drawParticles(in context: inout GraphicsContext, center: CGPoint, side: CGFloat) {
@@ -198,9 +198,9 @@ private struct DetonationCanvas: View {
             let angle = (seed / 22.0) * Double.pi * 2 + sin(seed * 1.91) * 0.15
             let maxDistance = side * CGFloat(0.16 + (sin(seed * 2.37) + 1) * 0.055)
             let distance = maxDistance * CGFloat(travel)
-            let x = center.x + cos(angle) * distance
-            let y = center.y + sin(angle) * distance
-            let diameter = CGFloat(1.7 + (index % 4)) * CGFloat(1 - 0.42 * travel)
+            let x = center.x + CGFloat(cos(angle)) * distance
+            let y = center.y + CGFloat(sin(angle)) * distance
+            let diameter = CGFloat(1.7 + Double(index % 4)) * CGFloat(1 - 0.42 * travel)
             let rect = CGRect(x: x - diameter / 2, y: y - diameter / 2, width: diameter, height: diameter)
             context.fill(Path(ellipseIn: rect), with: .color((index % 3 == 0 ? Color.white : nukeYellow).opacity(opacity * 0.86)))
         }

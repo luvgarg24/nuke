@@ -15,6 +15,16 @@ A tiny, native macOS storage cleaner that tells you what is eating your disk bef
 - Review items are never automatically deleted
 - Optional Full Disk Access explainer and shortcut to macOS Privacy settings
 - Reveal any finding in Finder
+- Detects a cable-connected, trusted iPhone through Image Capture Core
+- Catalogues exposed photos and videos, sorted largest-first
+- Filters iPhone media by photo or video and supports individual multi-selection
+- Deletes selected iPhone media only after an explicit destructive confirmation
+
+## iPhone support
+
+Connect an unlocked iPhone by cable and trust the Mac when iOS asks. NUKE uses Apple's public `ImageCaptureCore` framework to read the photo/video catalogue exposed by the device, including file sizes, dimensions, duration, dates, and thumbnails.
+
+iOS does **not** expose private app containers, app caches, or arbitrary “On My iPhone” documents to third-party Mac apps over USB. NUKE does not use private `MobileDevice` APIs to bypass that boundary. The iPhone feature therefore covers the camera-roll media that Apple's public API makes available.
 
 ## Run
 
